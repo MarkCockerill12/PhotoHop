@@ -33,6 +33,11 @@ pub struct VideoInfo {
     pub fps: f64,
     pub duration: f64,
     pub has_audio: bool,
+    /// More than 8 bits per channel (decoded at 16 bits to avoid banding).
+    pub deep: bool,
+    pub transfer: color::Transfer,
+    /// BT.2020 primaries (converted to the working BT.709 primaries on decode).
+    pub bt2020: bool,
 }
 
 impl VideoInfo {
@@ -79,7 +84,10 @@ pub fn probe_sequence(pattern: &Path, fps: f64) -> Result<(VideoInfo, u64)> {
     let (first_no, first) = files.first().ok_or_else(|| anyhow!("no files match {}", pattern.display()))?;
     let (w, h) = image::image_dimensions(first).with_context(|| format!("reading {}", first.display()))?;
     let n = files.len() as f64;
-    Ok((VideoInfo { width: w, height: h, fps, duration: n / fps, has_audio: false }, *first_no))
+    Ok((
+        VideoInfo { width: w, height: h, fps, duration: n / fps, has_audio: false, deep: false, transfer: color::Transfer::Sdr, bt2020: false },
+        *first_no,
+    ))
 }
 
 /// Default frame rate assumed for image sequences when probing them like videos.
@@ -127,7 +135,15 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
     if w == 0 || h == 0 {
         bail!("could not read video size");
     }
-    Ok(VideoInfo { width: w, height: h, fps, duration, has_audio })
+    let pix = vs["pix_fmt"].as_str().unwrap_or("");
+    let deep = ["10", "12", "16", "p010", "p016"].iter().any(|t| pix.contains(t));
+    let transfer = match vs["color_transfer"].as_str().unwrap_or("") {
+        "smpte2084" => color::Transfer::Pq,
+        "arib-std-b67" => color::Transfer::Hlg,
+        _ => color::Transfer::Sdr,
+    };
+    let bt2020 = vs["color_primaries"].as_str().is_some_and(|p| p.starts_with("bt2020"));
+    Ok(VideoInfo { width: w, height: h, fps, duration, has_audio, deep, transfer, bt2020 })
 }
 
 /// Sequential frame reader for one video file.
@@ -191,13 +207,19 @@ impl VideoReader {
         if (self.out_width, self.out_height) != (self.info.width, self.info.height) {
             cmd.args(["-vf", &format!("scale={}:{}:flags=bilinear", self.out_width, self.out_height)]);
         }
-        cmd.args(["-f", "rawvideo", "-pix_fmt", "rgba", "-fps_mode", "passthrough", "-"]);
+        let pix_fmt = if self.wide() { "rgba64le" } else { "rgba" };
+        cmd.args(["-f", "rawvideo", "-pix_fmt", pix_fmt, "-fps_mode", "passthrough", "-"]);
         cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
         let mut child = cmd.spawn().context("starting ffmpeg (is FFmpeg installed and on PATH?)")?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("ffmpeg stdout"))?;
         self.child = Some((child, stdout));
         self.next_frame = frame;
         Ok(())
+    }
+
+    /// Decode at 16 bits per channel (deep or HDR sources).
+    fn wide(&self) -> bool {
+        self.info.deep || self.info.transfer != color::Transfer::Sdr || self.info.bt2020
     }
 
     fn stop(&mut self) {
@@ -216,7 +238,7 @@ impl VideoReader {
             self.spawn_at(index)?;
         }
         let (w, h) = (self.out_width, self.out_height);
-        let size = (w * h * 4) as usize;
+        let size = (w * h * 4) as usize * if self.wide() { 2 } else { 1 };
         self.buf.resize(size, 0);
         loop {
             let (_, out) = self.child.as_mut().ok_or_else(|| anyhow!("decoder not running"))?;
@@ -227,7 +249,13 @@ impl VideoReader {
             let got = self.next_frame;
             self.next_frame += 1;
             if got >= index {
-                return Ok(Frame::new(w, h, color::rgba8_srgb_to_linear_premul(&self.buf)));
+                let px = if self.wide() {
+                    let words: Vec<u16> = self.buf.as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect();
+                    color::rgba16_video_to_linear_premul(&words, self.info.transfer, self.info.bt2020)
+                } else {
+                    color::rgba8_srgb_to_linear_premul(&self.buf)
+                };
+                return Ok(Frame::new(w, h, px));
             }
         }
     }

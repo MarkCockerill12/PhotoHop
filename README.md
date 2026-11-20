@@ -41,6 +41,7 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
   hue, saturation or brightness (with a matte view to check the selection)
 - Undo/redo for everything, including brush strokes
 - Video preview with background decoding, hardware decode and half/quarter-resolution proxies
+- 10-bit and HDR video (HDR10/PQ, HLG, BT.2020) decoded at 16 bits into the linear working space
 - Export the current frame (PNG 8/16-bit, JPEG, linear EXR) or the timeline as H.264, H.265 or
   ProRes 4444 with alpha, keeping the original audio
 - Project files (`.phop`) that store media paths relative to the project
@@ -88,7 +89,8 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
 
 1. **Editing shell** — layers, timeline, keyframes, transforms, crop, paint, export *(done)*
 2. **Masks & cutouts** — mask painting, selections, AI cutouts (photo + video) *(done)*; bezier roto
-3. **Colour** — wheels, grade, non-AI matching, curves, HSL qualifier, scopes *(done)*; colour management (OCIO/Log/RAW)
+3. **Colour** — wheels, grade, non-AI matching, curves, HSL qualifier, scopes, HDR/10-bit video *(done)*;
+   camera RAW (DNG) import, OCIO configs
 4. **Integration** — relighting, cast/contact shadows, light wrap, grain, blur/sharpen *(done)*;
    automatic grain/sharpness and light matching, haze *(done)*; bloom
 5. **Tracking** — AI region tracking + match-move *(done)*; point/planar trackers, stabiliser, 3D camera solve

@@ -58,3 +58,31 @@ fn image_sequence_reads_like_video() {
     assert!(red(&f3) > red(&f1), "{} vs {}", red(&f3), red(&f1));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn hdr10_hlg_clip_decodes_wide() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("ph-hdr-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("hlg.mp4");
+    // 10-bit HLG / BT.2020 test clip with a 75% grey (HLG reference white) frame.
+    let ok = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0xBFBFBF:s=64x48:d=0.5", "-pix_fmt", "yuv420p10le",
+               "-c:v", "libx265", "-x265-params", "log-level=error:colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc", "-color_primaries", "bt2020", "-color_trc", "arib-std-b67",
+               "-colorspace", "bt2020nc"])
+        .arg(&path)
+        .status()
+        .is_ok_and(|s| s.success());
+    if !ok {
+        eprintln!("ffmpeg without libx265; skipping");
+        return;
+    }
+    let mut r = VideoReader::open(&path).unwrap();
+    assert!(r.info.deep && r.info.bt2020 && r.info.transfer == ph_media::color::Transfer::Hlg, "{:?}", r.info);
+    let f = r.frame(0).unwrap();
+    let g = f.pixels[1].to_f32();
+    assert!((g - 1.0).abs() < 0.15, "HLG reference grey should decode near 1.0, got {g}");
+    std::fs::remove_dir_all(&dir).ok();
+}
