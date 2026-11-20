@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "photohop_bridge"
-version = "0.2.0"
+version = "0.3.0"
 name = "PhotoHop Bridge"
 tagline = "Round-trip PhotoHop composites through Blender"
 maintainer = "PhotoHop"

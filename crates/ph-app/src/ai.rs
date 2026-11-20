@@ -22,6 +22,8 @@ pub enum AiTask {
     TrackBox([f32; 4]),
     /// Cut the main subject out of a whole video (BiRefNet + MatAnyone 2).
     VideoCutout,
+    /// Repaint an object away (SAM 3 + FLUX.2 klein); result is a patch layer limited to the object.
+    Remove(String),
 }
 
 impl AiTask {
@@ -32,6 +34,7 @@ impl AiTask {
             Self::Normals => "AI normals".into(),
             Self::TrackBox(_) => "AI region track".into(),
             Self::VideoCutout => "AI video cutout".into(),
+            Self::Remove(p) => format!("AI remove \"{p}\""),
         }
     }
 
@@ -56,6 +59,7 @@ pub struct AiState {
     /// Python interpreter of the environment where `photohop-ai` is installed.
     pub python: String,
     pub prompt: String,
+    pub remove_prompt: String,
     pub show_dialog: bool,
     pub job: Option<AiJob>,
     /// Next viewer drag draws a box for region tracking.
@@ -66,7 +70,7 @@ impl Default for AiState {
     fn default() -> Self {
         let python = std::env::var("PHOTOHOP_AI_PYTHON")
             .unwrap_or_else(|_| if cfg!(windows) { "python".into() } else { "python3".into() });
-        Self { python, prompt: "person".into(), show_dialog: false, job: None, picking_box: false }
+        Self { python, prompt: "person".into(), remove_prompt: "toy gun".into(), show_dialog: false, job: None, picking_box: false }
     }
 }
 
@@ -158,6 +162,7 @@ impl App {
         let output = match &task {
             AiTask::Normals => dir.join(format!("normals-{}.png", id.0)),
             t if t.is_video() => dir.join(format!("maskvideo-{}-{stamp}.mp4", id.0)),
+            AiTask::Remove(_) => dir.join(format!("patch-{}-{stamp}.png", id.0)),
             _ => dir.join(format!("mask-{}.png", id.0)),
         };
         let mut args = vec![String::new(), input.to_string_lossy().into_owned(), output.to_string_lossy().into_owned()];
@@ -173,6 +178,10 @@ impl App {
                 args.extend(["--box".into(), format!("{},{},{},{}", b[0], b[1], b[2], b[3])]);
             }
             AiTask::VideoCutout => args[0] = "video-matte".into(),
+            AiTask::Remove(prompt) => {
+                args[0] = "remove".into();
+                args.extend(["--prompt".into(), prompt.clone()]);
+            }
         }
         let (tx, rx) = unbounded();
         let python = self.ai.python.clone();
@@ -213,6 +222,34 @@ impl App {
                 });
                 return Ok(format!(
                     "{} done in {:.0}s — applied as the layer's mask (tick Invert in the Mask section to cut the region out).",
+                    job.task.label(),
+                    v["seconds"].as_f64().unwrap_or(0.0)
+                ));
+            }
+            if let AiTask::Remove(what) = &job.task {
+                let (w, h) = ph_media::image_io::image_dimensions(&job.output)?;
+                let media = ph_core::MediaRef {
+                    id: ph_core::MediaId::new(),
+                    path: job.output.clone(),
+                    kind: ph_core::MediaKind::Image,
+                    width: w,
+                    height: h,
+                };
+                let (mid, src) = (media.id, job.layer);
+                let name = format!("Removed: {what}");
+                self.edit(&job.task.label(), |d| {
+                    let Some(idx) = d.layer_index(src) else { return };
+                    let base = d.layers[idx].clone();
+                    d.media.push(media);
+                    let mut l = ph_core::Layer::new(name, ph_core::LayerContent::Media { media: mid, trim_in: 0.0 }, &d.canvas);
+                    l.transform = base.transform.clone();
+                    l.start = base.start;
+                    l.length = base.length;
+                    l.grade = base.grade.clone();
+                    d.layers.insert(idx + 1, l);
+                });
+                return Ok(format!(
+                    "{} done in {:.0}s — added as a patch layer above (only the object area changes).",
                     job.task.label(),
                     v["seconds"].as_f64().unwrap_or(0.0)
                 ));

@@ -78,6 +78,13 @@ def cmd_video_matte(args) -> dict:
     return {"output": args.output, "frames": n}
 
 
+def cmd_remove(args) -> dict:
+    from .inpaint import remove
+
+    cover = remove(args.input, args.output, args.prompt, args.fill, device=_device())
+    return {"output": args.output, "coverage": cover}
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="photohop-ai")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -105,11 +112,17 @@ def main(argv=None) -> int:
     vm.add_argument("input")
     vm.add_argument("output")
     vm.add_argument("--max-side", type=int, default=720)
+    rm = sub.add_parser("remove", help="repaint an object away (SAM 3 mask + FLUX.2 klein) -> RGBA patch PNG")
+    rm.add_argument("input")
+    rm.add_argument("output")
+    rm.add_argument("--prompt", required=True, help="what to remove, e.g. 'toy gun'")
+    rm.add_argument("--fill", default="empty background, seamless continuation of the surrounding scene, no people, no faces, no objects, photo",
+                    help="what should be there instead")
     args = p.parse_args(argv)
     t0 = time.time()
     try:
         cmds = {"info": cmd_info, "matte": cmd_matte, "segment": cmd_segment, "normals": cmd_normals,
-                "track": cmd_track, "video-matte": cmd_video_matte}
+                "track": cmd_track, "video-matte": cmd_video_matte, "remove": cmd_remove}
         result = cmds[args.cmd](args)
         result.update(ok=True, seconds=round(time.time() - t0, 2))
     except Exception as e:  # noqa: BLE001 - report every failure as JSON for the app

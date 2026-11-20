@@ -16,6 +16,9 @@ dependencies = [
     "huggingface_hub",
 ]
 
+[project.optional-dependencies]
+inpaint = ["diffusers>=0.40", "accelerate", "peft", "sentencepiece"]
+
 [project.scripts]
 photohop-ai = "photohop_ai.cli:main"
 

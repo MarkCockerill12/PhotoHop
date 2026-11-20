@@ -117,6 +117,9 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             if ui.add_enabled(!busy, egui::Button::new("Mask from text…")).clicked() {
                 app.ai.show_dialog = true;
             }
+            if ui.add_enabled(!busy, egui::Button::new("Remove object…")).clicked() {
+                app.ai.show_dialog = true;
+            }
             ui.separator();
             if ui.add_enabled(!busy, egui::Button::new("Video: cut out subject (whole clip)")).clicked()
                 && let Err(e) = app.start_ai(crate::ai::AiTask::VideoCutout)
@@ -131,7 +134,7 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             if ui.button("Settings…").clicked() {
                 app.ai.show_dialog = true;
             }
-            ui.label(egui::RichText::new("AI only makes masks here; your pixels are never repainted.").small().weak());
+            ui.label(egui::RichText::new("AI makes masks and colour/light settings; only 'Remove object' paints, and only inside the object.").small().weak());
         });
         ui.menu_button("View", |ui| {
             ui.checkbox(&mut app.scopes.show, "Scopes  (S)");
@@ -232,6 +235,17 @@ pub fn ai_window(app: &mut App, ctx: &egui::Context) {
             }
             if busy {
                 ui.spinner();
+            }
+        });
+        ui.separator();
+        ui.label("Remove an object (AI repaints only that object's area, as a separate patch layer):");
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut app.ai.remove_prompt);
+            if ui.add_enabled(!busy, egui::Button::new("Remove")).clicked() {
+                let p = app.ai.remove_prompt.trim().to_owned();
+                if let Err(e) = app.start_ai(crate::ai::AiTask::Remove(p)) {
+                    app.status = format!("AI: {e:#}");
+                }
             }
         });
         ui.separator();
