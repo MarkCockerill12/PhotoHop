@@ -42,13 +42,13 @@ pub struct MediaCache {
     ctx: egui::Context,
 }
 
-fn spawn_decoder(path: PathBuf, div: u32, ctx: egui::Context) -> (Sender<u64>, Receiver<Decoded>) {
+fn spawn_decoder(path: PathBuf, div: u32, fps: f64, ctx: egui::Context) -> (Sender<u64>, Receiver<Decoded>) {
     let (req_tx, req_rx) = unbounded::<u64>();
     let (res_tx, res_rx) = unbounded();
     thread::Builder::new()
         .name("video-decode".into())
         .spawn(move || {
-            let mut reader = match VideoReader::open_scaled(&path, div) {
+            let mut reader = match VideoReader::open_with(&path, div, fps) {
                 Ok(r) => r,
                 Err(e) => {
                     let _ = res_tx.send((0, Err(format!("{e:#}"))));
@@ -105,7 +105,11 @@ impl MediaCache {
     fn ensure(&mut self, m: &MediaRef) {
         if m.is_video() {
             if !self.videos.contains_key(&m.id) {
-                let (request, results) = spawn_decoder(m.path.clone(), self.proxy_div, self.ctx.clone());
+                let media_fps = match m.kind {
+                    ph_core::MediaKind::Video { fps, .. } => fps,
+                    ph_core::MediaKind::Image => 24.0,
+                };
+                let (request, results) = spawn_decoder(m.path.clone(), self.proxy_div, media_fps, self.ctx.clone());
                 let (fps, frame_count) = match m.kind {
                     ph_core::MediaKind::Video { fps, duration, .. } => (fps, (duration * fps).floor().max(1.0) as u64),
                     ph_core::MediaKind::Image => (1.0, 1),

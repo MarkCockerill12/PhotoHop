@@ -21,6 +21,9 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     if app.export.job.is_some() && app.pump_export() {
         ui.ctx().request_repaint();
     }
+    if app.blender_job.is_some() && app.pump_blender_export() {
+        ui.ctx().request_repaint();
+    }
 
     egui::Panel::top("menu").show(ui, |ui| {
         menu::menu_bar(app, ui);
@@ -32,6 +35,11 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
             if let Some(job) = &app.export.job {
                 ui.separator();
                 ui.add(egui::ProgressBar::new(job.frame as f32 / job.total.max(1) as f32).desired_width(200.0).show_percentage());
+            }
+            if let Some(job) = &app.blender_job {
+                ui.separator();
+                ui.label("Blender bundle");
+                ui.add(egui::ProgressBar::new(job.progress()).desired_width(200.0).show_percentage());
             }
         });
     });

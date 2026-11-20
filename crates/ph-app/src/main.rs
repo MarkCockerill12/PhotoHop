@@ -5,6 +5,7 @@
 
 mod ai;
 mod app;
+mod blender;
 mod export;
 mod matching;
 mod media_cache;

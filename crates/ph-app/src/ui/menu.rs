@@ -70,6 +70,19 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             if ui.button("Export…").clicked() {
                 app.export.open = true;
             }
+            ui.separator();
+            if ui.button("Export to Blender…").on_hover_text("Writes a bundle for the PhotoHop Bridge add-on (selected layer = you)").clicked()
+                && let Some(dir) = rfd::FileDialog::new().set_title("Choose an empty folder for the Blender bundle").pick_folder()
+                && let Err(e) = app.start_blender_export(&dir)
+            {
+                app.status = format!("Blender export failed: {e:#}");
+            }
+            if ui.button("Import Blender render…").clicked()
+                && let Some(dir) = rfd::FileDialog::new().set_title("Pick the Blender bundle folder").pick_folder()
+                && let Err(e) = app.import_blender_render(&dir)
+            {
+                app.status = format!("Import failed: {e:#}");
+            }
         });
         ui.menu_button("Edit", |ui| {
             let undo = app.history.undo_label().map(|l| format!("Undo {l}")).unwrap_or_else(|| "Undo".into());

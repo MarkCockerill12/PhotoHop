@@ -30,6 +30,10 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
   skin falloff — shading changes only, never repainted pixels
 - **Video masks** (AI): cut yourself out of a whole clip, or draw a box to track a region (e.g. a
   window) and replace what's behind it; **Follow tracked region** keyframes another layer to move with it
+- **Blender round trip**: File > Export to Blender writes a bundle; the PhotoHop Bridge add-on
+  (`photohop_bridge.zip` on the Releases page) builds the scene — matching camera, you as a card that
+  casts shadows and hides props behind you, a shadow-catcher floor at your feet, a sun from the Relight
+  pad. Add props (e.g. a game weapon in your hand), Render for PhotoHop, then File > Import Blender render
 - Curves (master / R / G / B, GIMP spline) and an HSL qualifier to select a colour range and shift its
   hue, saturation or brightness (with a matte view to check the selection)
 - Undo/redo for everything, including brush strokes
@@ -84,7 +88,7 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
 4. **Integration** — relighting, cast/contact shadows, light wrap, grain, blur/sharpen *(done)*;
    automatic grain/sharpness matching, haze and bloom
 5. **Tracking** — AI region tracking + match-move *(done)*; point/planar trackers, stabiliser, 3D camera solve
-6. **Blender round-trip** — export camera, cutout and body motion to Blender, bring renders back
+6. **Blender round-trip** — bundle export, add-on, render import *(done)*; camera solve and body motion export
 7. **AI auto-colour** and an optional "game-ify" look
 
 ## AI (optional)

@@ -159,7 +159,7 @@ impl App {
     }
 }
 
-fn fetch_full(
+pub(crate) fn fetch_full(
     readers: &mut HashMap<MediaId, VideoReader>,
     stills: &mut HashMap<MediaId, Frame>,
     m: &ph_core::MediaRef,
@@ -167,7 +167,11 @@ fn fetch_full(
 ) -> Option<(u64, Frame)> {
     if m.is_video() {
         if let Entry::Vacant(e) = readers.entry(m.id) {
-            e.insert(VideoReader::open(&m.path).ok()?);
+            let fps = match m.kind {
+                ph_core::MediaKind::Video { fps, .. } => fps,
+                ph_core::MediaKind::Image => 24.0,
+            };
+            e.insert(VideoReader::open_with(&m.path, 1, fps).ok()?);
         }
         let r = readers.get_mut(&m.id)?;
         let idx = (t * r.info.fps).floor().max(0.0) as u64;

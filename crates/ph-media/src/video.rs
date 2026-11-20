@@ -47,7 +47,48 @@ fn parse_rate(s: &str) -> Option<f64> {
     (d > 0.0 && n > 0.0).then_some(n / d)
 }
 
+/// An image sequence is addressed by a printf pattern in the file name, e.g. `render_%04d.png`.
+pub fn is_sequence_pattern(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| n.to_string_lossy().contains("%0"))
+}
+
+/// Files matching a sequence pattern, sorted, with their frame numbers.
+pub fn sequence_files(pattern: &Path) -> Vec<(u64, PathBuf)> {
+    let name = pattern.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let Some(pct) = name.find("%0") else { return Vec::new() };
+    let digits_end = name[pct..].find('d').map(|i| pct + i + 1).unwrap_or(pct);
+    let (prefix, suffix) = (&name[..pct], &name[digits_end..]);
+    let dir = pattern.parent().unwrap_or(Path::new("."));
+    let mut out: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            let mid = n.strip_prefix(prefix)?.strip_suffix(suffix)?;
+            mid.parse::<u64>().ok().map(|k| (k, e.path()))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Probe an image sequence (`fps` comes from the caller, sequences carry no timing).
+pub fn probe_sequence(pattern: &Path, fps: f64) -> Result<(VideoInfo, u64)> {
+    let files = sequence_files(pattern);
+    let (first_no, first) = files.first().ok_or_else(|| anyhow!("no files match {}", pattern.display()))?;
+    let (w, h) = image::image_dimensions(first).with_context(|| format!("reading {}", first.display()))?;
+    let n = files.len() as f64;
+    Ok((VideoInfo { width: w, height: h, fps, duration: n / fps, has_audio: false }, *first_no))
+}
+
+/// Default frame rate assumed for image sequences when probing them like videos.
+pub const SEQUENCE_FPS: f64 = 24.0;
+
 pub fn probe(path: &Path) -> Result<VideoInfo> {
+    if is_sequence_pattern(path) {
+        return probe_sequence(path, SEQUENCE_FPS).map(|(i, _)| i);
+    }
     let out = crate::process::command(ffprobe_bin())
         .args(["-v", "error", "-show_streams", "-show_format", "-of", "json"])
         .arg(path)
@@ -100,6 +141,8 @@ pub struct VideoReader {
     /// Index of the next frame the running process will deliver.
     next_frame: u64,
     buf: Vec<u8>,
+    /// First frame number of an image sequence (None for real video files).
+    start_number: Option<u64>,
 }
 
 /// Restart the decoder instead of reading forward when the target is further ahead than this.
@@ -112,11 +155,21 @@ impl VideoReader {
 
     /// Open with frames decoded at 1/`div` resolution (preview proxies). `div = 1` is full size.
     pub fn open_scaled(path: &Path, div: u32) -> Result<Self> {
-        let info = probe(path)?;
+        Self::open_with(path, div, SEQUENCE_FPS)
+    }
+
+    /// Like [`VideoReader::open_scaled`], with the frame rate to use if `path` is an image sequence.
+    pub fn open_with(path: &Path, div: u32, sequence_fps: f64) -> Result<Self> {
+        let (info, start_number) = if is_sequence_pattern(path) {
+            let (i, s) = probe_sequence(path, sequence_fps)?;
+            (i, Some(s))
+        } else {
+            (probe(path)?, None)
+        };
         let div = div.max(1);
         let even = |v: u32| (v.div_ceil(div) & !1).max(2);
         let (out_width, out_height) = if div == 1 { (info.width, info.height) } else { (even(info.width), even(info.height)) };
-        Ok(Self { path: path.to_path_buf(), info, child: None, out_width, out_height, next_frame: 0, buf: Vec::new() })
+        Ok(Self { path: path.to_path_buf(), info, child: None, out_width, out_height, next_frame: 0, buf: Vec::new(), start_number })
     }
 
     fn spawn_at(&mut self, frame: u64) -> Result<()> {
@@ -124,10 +177,15 @@ impl VideoReader {
         let t = frame as f64 / self.info.fps;
         let mut cmd = crate::process::command(ffmpeg_bin());
         cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin"]);
-        if t > 0.0 {
-            cmd.args(["-ss", &format!("{t:.6}")]);
+        if let Some(start) = self.start_number {
+            // Image sequences: jump straight to the wanted file instead of seeking.
+            cmd.args(["-framerate", &format!("{}", self.info.fps), "-start_number", &format!("{}", start + frame)]);
+        } else {
+            if t > 0.0 {
+                cmd.args(["-ss", &format!("{t:.6}")]);
+            }
+            cmd.args(["-hwaccel", "auto"]);
         }
-        cmd.args(["-hwaccel", "auto"]);
         cmd.arg("-i").arg(&self.path);
         cmd.args(["-an", "-sn"]);
         if (self.out_width, self.out_height) != (self.info.width, self.info.height) {

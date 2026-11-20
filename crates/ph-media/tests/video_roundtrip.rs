@@ -37,3 +37,24 @@ fn write_then_read_back() {
     assert!(lum(&back) < lum(&a) + 0.05);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn image_sequence_reads_like_video() {
+    if !have_ffmpeg() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("ph-seq-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..5u8 {
+        let img = image::RgbaImage::from_pixel(8, 6, image::Rgba([i * 50, 0, 0, 255]));
+        img.save(dir.join(format!("frame_{:04}.png", i + 1))).unwrap();
+    }
+    let pattern = dir.join("frame_%04d.png");
+    assert!(ph_media::video::is_sequence_pattern(&pattern));
+    let mut r = VideoReader::open(&pattern).unwrap();
+    assert_eq!((r.info.width, r.info.height, r.info.frame_count()), (8, 6, 5));
+    let red = |f: &Frame| f.pixels[0].to_f32();
+    let (f3, f1) = (r.frame(3).unwrap(), r.frame(1).unwrap());
+    assert!(red(&f3) > red(&f1), "{} vs {}", red(&f3), red(&f1));
+    std::fs::remove_dir_all(&dir).ok();
+}
