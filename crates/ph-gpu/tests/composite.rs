@@ -79,3 +79,25 @@ fn grade_and_mask() {
     let p = px0(&mut c, LayerDraw { mask: Some(2), mask_invert: true, ..base() });
     assert!((p[3] - 1.0).abs() < 0.001, "inverted black mask shows {p:?}");
 }
+
+#[test]
+fn scope_readback() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut c = Compositor::new(&device, &queue);
+    c.render(64, 32, [1.0, 0.0, 0.0, 1.0], &[]);
+    c.request_scope(16);
+    let mut img = None;
+    for _ in 0..200 {
+        img = c.take_scope();
+        if img.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let img = img.expect("scope image");
+    assert_eq!((img.width, img.height), (16, 8));
+    assert_eq!(&img.rgba[..4], &[255, 0, 0, 255]);
+}

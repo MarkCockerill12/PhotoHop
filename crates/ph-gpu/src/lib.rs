@@ -3,4 +3,4 @@
 pub mod compositor;
 mod pipelines;
 
-pub use compositor::{Compositor, DISPLAY_FORMAT, LayerDraw, WORK_FORMAT};
+pub use compositor::{Compositor, DISPLAY_FORMAT, LayerDraw, ScopeImage, WORK_FORMAT};

@@ -91,6 +91,13 @@ pub fn viewer(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     let media = &mut app.media;
     render::composite(&mut app.viewer.gpu, &app.doc, t, &app.paint, &app.masks, |m, mt| media.frame(m, mt));
     app.viewer.sync_texture(rs);
+    if app.scopes.show {
+        if let Some(img) = app.viewer.gpu.take_scope() {
+            app.scopes.set_image(img);
+        }
+        app.viewer.gpu.request_scope(480);
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+    }
 
     let painter = ui.painter_at(rect);
     if let Some(id) = app.viewer.tex_id {

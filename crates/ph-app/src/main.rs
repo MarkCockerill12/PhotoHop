@@ -6,6 +6,7 @@ mod matching;
 mod media_cache;
 mod paint;
 mod render;
+mod scopes;
 mod ui;
 
 use app::App;
@@ -45,6 +46,8 @@ fn main() -> eframe::Result {
             let rs = cc.wgpu_render_state.as_ref().ok_or("PhotoHop needs the wgpu renderer")?;
             egui_material_icons::initialize(&cc.egui_ctx);
             let mut app = App::new(&cc.egui_ctx, &rs.device, &rs.queue);
+            // Open the scopes window at startup (also handy for scripted screenshots).
+            app.scopes.show = std::env::var_os("PHOTOHOP_SHOW_SCOPES").is_some();
             if let Some(path) = std::env::args_os().nth(1).map(std::path::PathBuf::from) {
                 let res = if path.extension().is_some_and(|e| e == "phop") { app.open(&path) } else { app.import(&path) };
                 if let Err(e) = res {

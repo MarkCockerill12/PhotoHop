@@ -44,6 +44,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
         viewer::viewer(app, ui, rs);
     });
     menu::export_window(app, ui.ctx());
+    app.scopes.window(ui.ctx());
 
     if app.playing {
         ui.ctx().request_repaint();
@@ -106,6 +107,9 @@ fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     }
     if pressed(egui::Key::Home) {
         app.set_time(0.0);
+    }
+    if pressed(egui::Key::S) {
+        app.scopes.show = !app.scopes.show;
     }
     if pressed(egui::Key::K) {
         crate::ui::inspector::toggle_all_keys(app);

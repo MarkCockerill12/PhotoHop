@@ -24,6 +24,7 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
 - **Match colour** to another layer without AI (colour cast only, brightness & contrast only, or full
   statistical transfer), with an amount slider
 - Layer masks: paint to hide (brush) or reveal (eraser), invert, toggle
+- Scopes (S): waveform, RGB parade, vectorscope with skin-tone line, histogram
 - Undo/redo for everything, including brush strokes
 - Video preview with background decoding, hardware decode and half/quarter-resolution proxies
 - Export the current frame (PNG 8/16-bit, JPEG, linear EXR) or the timeline as H.264, H.265 or
@@ -53,6 +54,7 @@ cargo run --release -p photohop -- photo.jpg  # open a photo, video or .phop pro
 | C | Crop tool (Enter applies, Esc cancels) | ← / → | Previous / next frame |
 | B / E | Brush / eraser | Home | Go to start |
 | H | Hand (pan) — or middle-drag / Space-drag | K | Toggle keyframes on the selected layer |
+| S | Show / hide scopes | | |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo | Ctrl+0 | Fit canvas to window |
 | Ctrl+O / Ctrl+S | Open / save project | Ctrl+I | Import media |
 | Ctrl+D | Duplicate layer | Del | Delete layer |

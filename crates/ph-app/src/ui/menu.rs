@@ -95,6 +95,7 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             }
         });
         ui.menu_button("View", |ui| {
+            ui.checkbox(&mut app.scopes.show, "Scopes  (S)");
             if ui.button("Fit to window  (Ctrl+0)").clicked() {
                 app.viewer.fit_pending = true;
             }
@@ -152,6 +153,9 @@ pub fn toolbar(app: &mut App, ui: &mut egui::Ui) {
                 ui.label("Drag to pan · scroll to zoom.");
             }
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.toggle_value(&mut app.scopes.show, "Scopes").on_hover_text("Waveform, parade, vectorscope, histogram (S)");
+        });
     });
 }
 

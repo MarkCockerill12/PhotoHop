@@ -73,6 +73,7 @@ pub struct App {
     pub brush: BrushSettings,
     pub viewer: Viewer,
     pub export: ExportState,
+    pub scopes: crate::scopes::Scopes,
     pub status: String,
     /// Unsaved changes since last save.
     pub dirty: bool,
@@ -101,6 +102,7 @@ impl App {
             brush: BrushSettings::default(),
             viewer: Viewer::new(device, queue),
             export: ExportState::default(),
+            scopes: crate::scopes::Scopes::default(),
             status: "Import a photo or video to start (File > Import, or drop files onto the window).".into(),
             dirty: false,
             auto_key: false,

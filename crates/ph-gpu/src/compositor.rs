@@ -7,6 +7,24 @@ use glam::{Affine2, Vec2};
 use half::f16;
 use ph_core::BlendMode;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// A small sRGB copy of the composite being read back asynchronously for scopes.
+struct ScopeJob {
+    buffer: wgpu::Buffer,
+    width: u32,
+    height: u32,
+    padded_row: u32,
+    ready: Arc<AtomicBool>,
+}
+
+/// Downsampled composite for scopes: straight sRGB RGBA8, row-major.
+pub struct ScopeImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
 
 pub const WORK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -56,6 +74,7 @@ pub struct Compositor {
     targets: Option<Targets>,
     /// Bumped whenever the display texture is recreated (the UI must re-register it).
     pub display_generation: u64,
+    scope_job: Option<ScopeJob>,
 }
 
 #[repr(C)]
@@ -137,6 +156,7 @@ impl Compositor {
             sources: HashMap::new(),
             targets: None,
             display_generation: 0,
+            scope_job: None,
         }
     }
 
@@ -268,6 +288,65 @@ impl Compositor {
             pass.dispatch_workgroups(groups(w), groups(h), 1);
         }
         self.queue.submit([enc.finish()]);
+    }
+
+    /// Queue a downsampled (≤ `max_width` px wide) copy of the last composite for scopes.
+    /// Ignored while a previous request is still in flight. Collect it with [`Compositor::take_scope`].
+    pub fn request_scope(&mut self, max_width: u32) {
+        if self.scope_job.is_some() {
+            return;
+        }
+        let Some(t) = self.targets.as_ref() else { return };
+        let w = t.width.min(max_width).max(1);
+        let h = ((t.height as f32 * w as f32 / t.width as f32).round() as u32).max(1);
+        let tex = storage_texture(&self.device, w, h, DISPLAY_FORMAT, "scope");
+        let view = tex.create_view(&Default::default());
+        let padded_row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scope readback"),
+            size: u64::from(padded_row) * u64::from(h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let bg = self.pipes.scope_bind_group(&self.device, &t.accum_views[t.latest], &view, &self.sampler);
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("scope") });
+        {
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("scope"), timestamp_writes: None });
+            pass.set_pipeline(&self.pipes.scope);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.dispatch_workgroups(groups(w), groups(h), 1);
+        }
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo { texture: &tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded_row), rows_per_image: Some(h) },
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([enc.finish()]);
+        let ready = Arc::new(AtomicBool::new(false));
+        let flag = ready.clone();
+        buffer.map_async(wgpu::MapMode::Read, .., move |r| flag.store(r.is_ok(), Ordering::Release));
+        self.scope_job = Some(ScopeJob { buffer, width: w, height: h, padded_row, ready });
+    }
+
+    /// The scope image, if the GPU has finished it. Never blocks.
+    pub fn take_scope(&mut self) -> Option<ScopeImage> {
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        if !self.scope_job.as_ref()?.ready.load(Ordering::Acquire) {
+            return None;
+        }
+        let job = self.scope_job.take()?;
+        let data = job.buffer.get_mapped_range(..).ok()?;
+        let mut rgba = Vec::with_capacity((job.width * job.height * 4) as usize);
+        for row in 0..job.height as usize {
+            let start = row * job.padded_row as usize;
+            rgba.extend_from_slice(&data[start..start + (job.width * 4) as usize]);
+        }
+        drop(data);
+        job.buffer.unmap();
+        Some(ScopeImage { width: job.width, height: job.height, rgba })
     }
 
     /// Read the last composite back as working-format pixels (for export). Blocks on the GPU.

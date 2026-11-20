@@ -15,6 +15,8 @@ pub struct Pipelines {
     pub composite: wgpu::ComputePipeline,
     pub clear: wgpu::ComputePipeline,
     pub display: wgpu::ComputePipeline,
+    pub scope: wgpu::ComputePipeline,
+    scope_bgl: wgpu::BindGroupLayout,
     composite_bgl: wgpu::BindGroupLayout,
     clear_bgl: wgpu::BindGroupLayout,
     display_bgl: wgpu::BindGroupLayout,
@@ -110,7 +112,22 @@ impl Pipelines {
             label: Some("display"),
             entries: &[tex_entry(0), storage_entry(1, DISPLAY_FORMAT), uniform_entry(2)],
         });
+        let scope_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scope"),
+            entries: &[
+                tex_entry(0),
+                storage_entry(1, DISPLAY_FORMAT),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
         Self {
+            scope: pipeline(device, &disp, &scope_bgl, "scope_downsample"),
+            scope_bgl,
             composite: pipeline(device, &comp, &composite_bgl, "composite"),
             clear: pipeline(device, &comp, &clear_bgl, "clear"),
             display: pipeline(device, &disp, &display_bgl, "display"),
@@ -118,6 +135,24 @@ impl Pipelines {
             clear_bgl,
             display_bgl,
         }
+    }
+
+    pub fn scope_bind_group(
+        &self,
+        device: &wgpu::Device,
+        src: &wgpu::TextureView,
+        dst: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scope"),
+            layout: &self.scope_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(src) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(dst) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+            ],
+        })
     }
 
     pub fn uniform(&self, device: &wgpu::Device, bytes: &[u8]) -> wgpu::Buffer {
