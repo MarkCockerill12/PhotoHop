@@ -1,0 +1,40 @@
+[workspace]
+resolver = "3"
+members = ["crates/ph-core", "crates/ph-media", "crates/ph-gpu", "crates/ph-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/MarkCockerill12/PhotoHop"
+
+[workspace.dependencies]
+ph-core = { path = "crates/ph-core" }
+ph-media = { path = "crates/ph-media" }
+ph-gpu = { path = "crates/ph-gpu" }
+eframe = { version = "0.37", default-features = false, features = ["wgpu", "default_fonts", "wayland", "x11", "persistence"] }
+egui = "0.37"
+egui-wgpu = "0.37"
+egui_material_icons = "0.9"
+wgpu = "30"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "exr", "tiff", "webp"] }
+half = { version = "2", features = ["bytemuck"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bytemuck = { version = "1", features = ["derive"] }
+glam = { version = "0.34", features = ["serde", "bytemuck"] }
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+rfd = "0.18"
+crossbeam-channel = "0.5"
+pollster = "0.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[profile.dev]
+opt-level = 1
+[profile.dev.package."*"]
+opt-level = 3
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,13 @@
+[package]
+name = "ph-media"
+description = "PhotoHop media I/O: images, video via ffmpeg subprocess, colour conversion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+image.workspace = true
+half.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,6 @@
+/target
+**/*.rs.bk
+*.phop.autosave
+/scripts/
+.DS_Store
+Thumbs.db

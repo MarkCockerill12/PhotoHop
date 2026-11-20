@@ -1,0 +1,29 @@
+[package]
+name = "photohop"
+description = "PhotoHop: put yourself into any scene, photo or video"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "photohop"
+path = "src/main.rs"
+
+[dependencies]
+ph-core.workspace = true
+ph-media.workspace = true
+ph-gpu.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+egui_material_icons.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+half.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+rfd.workspace = true
+serde_json.workspace = true
+crossbeam-channel.workspace = true

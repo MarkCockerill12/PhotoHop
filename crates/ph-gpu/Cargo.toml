@@ -1,0 +1,19 @@
+[package]
+name = "ph-gpu"
+description = "PhotoHop GPU compositor (wgpu, scene-linear float)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ph-core.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+half.workspace = true
+anyhow.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true
