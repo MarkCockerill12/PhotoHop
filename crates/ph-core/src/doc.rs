@@ -4,6 +4,7 @@
 
 use crate::anim::Animated;
 use crate::blend::BlendMode;
+use crate::grade::{Grade, LayerMask};
 use glam::{Affine2, Vec2};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -138,6 +139,10 @@ pub struct Layer {
     /// Timeline placement (seconds). `length = None` lasts to the end of the timeline.
     pub start: f64,
     pub length: Option<f64>,
+    #[serde(default)]
+    pub grade: Grade,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<LayerMask>,
 }
 
 impl Layer {
@@ -153,6 +158,8 @@ impl Layer {
             content,
             start: 0.0,
             length: None,
+            grade: Grade::default(),
+            mask: None,
         }
     }
 
@@ -177,6 +184,7 @@ impl Layer {
             .chain(tr.scale.key_times())
             .chain(tr.rotation.key_times())
             .chain(self.opacity.key_times())
+            .chain(self.grade.key_times())
             .collect();
         v.sort_by(f64::total_cmp);
         v.dedup_by(|a, b| (*a - *b).abs() < crate::anim::KEY_EPS);

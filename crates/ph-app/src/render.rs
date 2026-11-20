@@ -25,6 +25,8 @@ pub enum DragMode {
 pub struct Drag {
     pub mode: DragMode,
     pub layer: Option<LayerId>,
+    /// Painting into the layer mask instead of a paint raster.
+    pub target_mask: bool,
     pub start: Vec2,
     pub position: [f32; 2],
     pub scale: [f32; 2],
@@ -108,6 +110,7 @@ pub fn composite(
     doc: &Project,
     t: f64,
     paint: &HashMap<LayerId, PaintRaster>,
+    masks: &HashMap<LayerId, PaintRaster>,
     mut fetch: impl FnMut(&MediaRef, f64) -> Option<(u64, Frame)>,
 ) {
     let mut draws = Vec::new();
@@ -143,12 +146,28 @@ pub fn composite(
             }
         };
         keep.insert(key);
+        let mask = match (&layer.mask, masks.get(&layer.id)) {
+            (Some(m), Some(r)) if m.enabled => {
+                let mkey = hash_of(("mask", layer.id));
+                if !gpu.has_source(mkey, r.revision) {
+                    let f = r.to_frame();
+                    gpu.upload(mkey, r.revision, f.width, f.height, &f.pixels);
+                }
+                keep.insert(mkey);
+                Some(mkey)
+            }
+            _ => None,
+        };
+        let grade = (layer.grade.enabled && !layer.grade.is_identity()).then(|| layer.grade.sample(t));
         draws.push(LayerDraw {
             source: key,
             size,
             matrix: layer.transform.matrix(t, size),
             opacity: layer.opacity.at(t),
             blend: layer.blend,
+            mask,
+            mask_invert: layer.mask.as_ref().is_some_and(|m| m.invert),
+            grade,
         });
     }
     gpu.retain_sources(&keep);

@@ -158,6 +158,9 @@ pub fn inspector(app: &mut App, ui: &mut egui::Ui) {
     });
 
     ui.separator();
+    crate::ui::colour::colour_section(app, ui, &layer);
+
+    ui.separator();
     ui.heading("Timing");
     egui::Grid::new("timing_grid").num_columns(2).show(ui, |ui| {
         ui.label("Starts at");

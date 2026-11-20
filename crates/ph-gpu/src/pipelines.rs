@@ -3,6 +3,14 @@
 use crate::compositor::{DISPLAY_FORMAT, WORK_FORMAT};
 use wgpu::util::DeviceExt;
 
+/// Textures read/written by one layer composite pass.
+pub struct CompositeViews<'a> {
+    pub backdrop: &'a wgpu::TextureView,
+    pub dst: &'a wgpu::TextureView,
+    pub src: &'a wgpu::TextureView,
+    pub mask: &'a wgpu::TextureView,
+}
+
 pub struct Pipelines {
     pub composite: wgpu::ComputePipeline,
     pub clear: wgpu::ComputePipeline,
@@ -91,6 +99,7 @@ impl Pipelines {
                     count: None,
                 },
                 uniform_entry(4),
+                tex_entry(5),
             ],
         });
         let clear_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -122,9 +131,7 @@ impl Pipelines {
     pub fn composite_bind_group(
         &self,
         device: &wgpu::Device,
-        backdrop: &wgpu::TextureView,
-        dst: &wgpu::TextureView,
-        src: &wgpu::TextureView,
+        v: &CompositeViews<'_>,
         sampler: &wgpu::Sampler,
         params: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
@@ -132,11 +139,12 @@ impl Pipelines {
             label: Some("composite"),
             layout: &self.composite_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(backdrop) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(dst) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(src) },
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(v.backdrop) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(v.dst) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(v.src) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(sampler) },
                 wgpu::BindGroupEntry { binding: 4, resource: params.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(v.mask) },
             ],
         })
     }

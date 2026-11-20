@@ -7,8 +7,8 @@ and lens look so the result reads as one image.
 
 It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow this job needs.
 
-> **Status: early development (milestone 1).** The editing shell works today; matching, masks,
-> tracking, relighting and the Blender round-trip are being built next (see the roadmap).
+> **Status: early development.** The editing shell, colour grading, masks and non-AI colour matching
+> work today; selections, scopes, relighting, tracking and the Blender round-trip are next (see the roadmap).
 
 ## What works now
 
@@ -19,6 +19,11 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
 - Move / scale / rotate with on-canvas handles, opacity, per-layer timing (start, source in point)
 - Keyframes on position, scale, rotation, opacity (and colour layers), with auto-key mode
 - Crop, paint layers with a soft brush and eraser (pressure-free for now), colour layers
+- Per-layer colour grade: exposure, temperature/tint, lift/gamma/gain colour wheels, contrast/pivot,
+  saturation — all keyframable
+- **Match colour** to another layer without AI (colour cast only, brightness & contrast only, or full
+  statistical transfer), with an amount slider
+- Layer masks: paint to hide (brush) or reveal (eraser), invert, toggle
 - Undo/redo for everything, including brush strokes
 - Video preview with background decoding, hardware decode and half/quarter-resolution proxies
 - Export the current frame (PNG 8/16-bit, JPEG, linear EXR) or the timeline as H.264, H.265 or
@@ -57,8 +62,8 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
 ## Roadmap
 
 1. **Editing shell** — layers, timeline, keyframes, transforms, crop, paint, export *(done)*
-2. **Masks & cutouts** — selections, bezier roto, mask painting, AI cutout suggestions you can refine
-3. **Colour** — colour management, Resolve-style wheels/curves/qualifier, scopes, non-AI colour matching
+2. **Masks & cutouts** — mask painting *(done)*; selections, bezier roto, AI cutout suggestions you can refine
+3. **Colour** — wheels, grade and non-AI matching *(done)*; curves, HSL qualifier, scopes, colour management
 4. **Integration** — relighting (shading only, never repainting you), cast/contact shadows, light wrap,
    grain / blur / lens matching, haze and bloom
 5. **Tracking** — point and planar trackers, stabiliser, 3D camera solve

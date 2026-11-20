@@ -1,5 +1,6 @@
 //! UI layout: menu + toolbar on top, layers left, inspector right, timeline bottom, viewer centre.
 
+mod colour;
 mod inspector;
 mod layers;
 mod menu;

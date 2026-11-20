@@ -67,6 +67,18 @@ impl PaintRaster {
         }
     }
 
+    pub fn filled(width: u32, height: u32, value: [f32; 4]) -> Self {
+        let mut r = Self::new(width, height);
+        r.data.fill(value);
+        r
+    }
+
+    pub fn duplicate(&self) -> Self {
+        let mut r = Self::new(self.width, self.height);
+        r.data.clone_from(&self.data);
+        r
+    }
+
     pub fn to_frame(&self) -> Frame {
         let px: Vec<f16> = self.data.iter().flatten().map(|v| f16::from_f32(*v)).collect();
         Frame::new(self.width, self.height, px)

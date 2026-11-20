@@ -11,9 +11,18 @@ struct LayerParams {
     opacity: f32,
     blend: u32,
     perceptual: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    has_mask: u32,
+    mask_invert: u32,
+    has_grade: u32,
+    // Grade (see ph-core grade.rs for the order of operations).
+    g_basic: vec4<f32>,   // exposure, temperature, tint, enabled
+    g_lift: vec4<f32>,
+    g_gamma: vec4<f32>,
+    g_gain: vec4<f32>,
+    g_offset: vec4<f32>,
+    g_tone: vec4<f32>,    // contrast, pivot, saturation, match amount
+    g_mscale: vec4<f32>,
+    g_moffset: vec4<f32>,
 };
 
 @group(0) @binding(0) var backdrop: texture_2d<f32>;
@@ -21,6 +30,7 @@ struct LayerParams {
 @group(0) @binding(2) var src_tex: texture_2d<f32>;
 @group(0) @binding(3) var src_sampler: sampler;
 @group(0) @binding(4) var<uniform> P: LayerParams;
+@group(0) @binding(5) var mask_tex: texture_2d<f32>;
 
 fn to_perceptual(c: vec3<f32>) -> vec3<f32> {
     let x = max(c, vec3<f32>(0.0));
@@ -76,12 +86,39 @@ fn blend(mode: u32, b: vec3<f32>, l: vec3<f32>) -> vec3<f32> {
     }
 }
 
+fn grade(lin: vec3<f32>) -> vec3<f32> {
+    // Linear stage: exposure and white balance (gains normalised to keep luminance).
+    var c = lin * exp2(P.g_basic.x);
+    let wb = vec3<f32>(exp(0.25 * P.g_basic.y), exp(-0.25 * P.g_basic.z), exp(-0.25 * P.g_basic.y));
+    c = c * (wb / luma(wb));
+    // Perceptual stage.
+    var p = to_perceptual(c);
+    p = mix(p, p * P.g_mscale.rgb + P.g_moffset.rgb, P.g_tone.w);
+    let lift = P.g_lift.rgb + P.g_lift.w;
+    let gain = P.g_gain.rgb * P.g_gain.w;
+    p = p * gain + lift * (vec3<f32>(1.0) - p);
+    let gexp = exp(-(P.g_gamma.rgb + P.g_gamma.w));
+    p = sign(p) * pow(abs(p), gexp);
+    p = (p - P.g_tone.y) * P.g_tone.x + P.g_tone.y;
+    let y = luma(p);
+    p = y + (p - y) * P.g_tone.z;
+    p = p + P.g_offset.rgb + P.g_offset.w;
+    return from_perceptual(max(p, vec3<f32>(0.0)));
+}
+
 fn sample_layer(p: vec2<f32>) -> vec4<f32> {
     let s = P.inv0.xy * p.x + P.inv1.xy * p.y + P.inv2.xy;
     if (s.x < 0.0 || s.y < 0.0 || s.x > P.src_size.x || s.y > P.src_size.y) {
         return vec4<f32>(0.0);
     }
-    return textureSampleLevel(src_tex, src_sampler, s / P.src_size, 0.0);
+    let uv = s / P.src_size;
+    var c = textureSampleLevel(src_tex, src_sampler, uv, 0.0);
+    if (P.has_mask != 0u) {
+        var m = textureSampleLevel(mask_tex, src_sampler, uv, 0.0).r;
+        if (P.mask_invert != 0u) { m = 1.0 - m; }
+        c = c * clamp(m, 0.0, 1.0);
+    }
+    return c;
 }
 
 @compute @workgroup_size(8, 8)
@@ -96,7 +133,8 @@ fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
     let a_l = clamp(lay.a * P.opacity, 0.0, 1.0);
     if (a_l <= 0.0) { textureStore(dst, px, back); return; }
 
-    let l = lay.rgb / max(lay.a, 1e-6);
+    var l = lay.rgb / max(lay.a, 1e-6);
+    if (P.has_grade != 0u) { l = grade(l); }
     if (a_in <= 0.0) { textureStore(dst, px, vec4<f32>(l * a_l, a_l)); return; }
     let b = back.rgb / a_in;
 

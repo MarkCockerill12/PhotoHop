@@ -127,6 +127,10 @@ pub fn toolbar(app: &mut App, ui: &mut egui::Ui) {
         ui.separator();
         match app.tool {
             Tool::Brush | Tool::Eraser => {
+                if app.edit_mask && app.selected_layer().is_some_and(|l| l.mask.is_some()) {
+                    ui.label(egui::RichText::new("Editing mask").color(egui::Color32::from_rgb(255, 196, 64)))
+                        .on_hover_text("Brush hides, eraser reveals. Turn off in the inspector's Mask section.");
+                }
                 let b = &mut app.brush;
                 ui.label("Size");
                 ui.add(egui::DragValue::new(&mut b.size).range(1.0..=2000.0).speed(1.0).suffix(" px"));

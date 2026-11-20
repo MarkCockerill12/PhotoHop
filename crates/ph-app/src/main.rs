@@ -2,6 +2,7 @@
 
 mod app;
 mod export;
+mod matching;
 mod media_cache;
 mod paint;
 mod render;

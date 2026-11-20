@@ -47,7 +47,8 @@ impl Tool {
 
 /// Undo entries that hold pixels (paint strokes) live outside the document history.
 pub enum PixelUndo {
-    Stroke { layer: LayerId, patch: Patch },
+    /// `mask` = the stroke was on the layer's mask rather than its paint raster.
+    Stroke { layer: LayerId, mask: bool, patch: Patch },
 }
 
 pub struct App {
@@ -61,6 +62,12 @@ pub struct App {
     pub play_anchor: Option<(Instant, f64)>,
     pub media: MediaCache,
     pub paint: HashMap<LayerId, PaintRaster>,
+    /// Layer masks (red channel = coverage, white = visible).
+    pub masks: HashMap<LayerId, PaintRaster>,
+    /// Brush/eraser paint into the selected layer's mask instead of its pixels.
+    pub edit_mask: bool,
+    pub match_mode: crate::matching::MatchMode,
+    pub match_reference: Option<LayerId>,
     pub pixel_undo: Vec<PixelUndo>,
     pub pixel_redo: Vec<PixelUndo>,
     pub brush: BrushSettings,
@@ -85,6 +92,10 @@ impl App {
             play_anchor: None,
             media: MediaCache::new(ctx.clone()),
             paint: HashMap::new(),
+            masks: HashMap::new(),
+            edit_mask: false,
+            match_mode: crate::matching::MatchMode::ColourCast,
+            match_reference: None,
             pixel_undo: Vec::new(),
             pixel_redo: Vec::new(),
             brush: BrushSettings::default(),
@@ -128,11 +139,11 @@ impl App {
     pub fn undo(&mut self) {
         if let Some(l) = self.history.undo(&mut self.doc) {
             self.status = format!("Undo: {l}");
-        } else if let Some(PixelUndo::Stroke { layer, patch }) = self.pixel_undo.pop()
-            && let Some(r) = self.paint.get_mut(&layer)
+        } else if let Some(PixelUndo::Stroke { layer, mask, patch }) = self.pixel_undo.pop()
+            && let Some(r) = if mask { self.masks.get_mut(&layer) } else { self.paint.get_mut(&layer) }
         {
             let redo = r.swap_patch(patch);
-            self.pixel_redo.push(PixelUndo::Stroke { layer, patch: redo });
+            self.pixel_redo.push(PixelUndo::Stroke { layer, mask, patch: redo });
             self.status = "Undo: brush stroke".into();
         }
         self.fix_selection();
@@ -141,11 +152,11 @@ impl App {
     pub fn redo(&mut self) {
         if let Some(l) = self.history.redo(&mut self.doc) {
             self.status = format!("Redo: {l}");
-        } else if let Some(PixelUndo::Stroke { layer, patch }) = self.pixel_redo.pop()
-            && let Some(r) = self.paint.get_mut(&layer)
+        } else if let Some(PixelUndo::Stroke { layer, mask, patch }) = self.pixel_redo.pop()
+            && let Some(r) = if mask { self.masks.get_mut(&layer) } else { self.paint.get_mut(&layer) }
         {
             let undo = r.swap_patch(patch);
-            self.pixel_undo.push(PixelUndo::Stroke { layer, patch: undo });
+            self.pixel_undo.push(PixelUndo::Stroke { layer, mask, patch: undo });
             self.status = "Redo: brush stroke".into();
         }
         self.fix_selection();
@@ -165,6 +176,9 @@ impl App {
         self.project_path = None;
         self.selected = None;
         self.paint.clear();
+        self.masks.clear();
+        self.edit_mask = false;
+        self.match_reference = None;
         self.pixel_undo.clear();
         self.pixel_redo.clear();
         self.media.clear();
@@ -182,6 +196,11 @@ impl App {
                 let raster = PaintRaster::load(&file).unwrap_or_else(|_| PaintRaster::new(width, height));
                 self.paint.insert(l.id, raster);
             }
+            if let Some(m) = &l.mask {
+                let file = project_file::mask_path(path, l.id);
+                let raster = PaintRaster::load(&file).unwrap_or_else(|_| PaintRaster::filled(m.width, m.height, [1.0; 4]));
+                self.masks.insert(l.id, raster);
+            }
         }
         self.selected = doc.layers.last().map(|l| l.id);
         self.doc = doc;
@@ -196,6 +215,11 @@ impl App {
         for (id, raster) in &self.paint {
             if self.doc.layer(*id).is_some() {
                 raster.save(&project_file::paint_layer_path(&path, *id)).context("saving paint layer")?;
+            }
+        }
+        for (id, raster) in &self.masks {
+            if self.doc.layer(*id).is_some_and(|l| l.mask.is_some()) {
+                raster.save(&project_file::mask_path(&path, *id)).context("saving layer mask")?;
             }
         }
         self.project_path = Some(path.clone());
@@ -296,9 +320,10 @@ impl App {
             doc.layers.insert(idx + 1, l);
         });
         if let Some(r) = self.paint.get(&id) {
-            let mut copy = PaintRaster::new(r.width, r.height);
-            copy.data.clone_from(&r.data);
-            self.paint.insert(new_id, copy);
+            self.paint.insert(new_id, r.duplicate());
+        }
+        if let Some(r) = self.masks.get(&id) {
+            self.masks.insert(new_id, r.duplicate());
         }
         self.selected = Some(new_id);
     }
@@ -311,6 +336,97 @@ impl App {
             return;
         }
         self.edit("Reorder layers", |doc| doc.layers.swap(i, j as usize));
+    }
+
+    // ---------- masks & colour matching ----------
+
+    /// Give the selected layer an all-white (fully visible) mask at its source resolution.
+    pub fn add_mask(&mut self) {
+        let Some(layer) = self.selected_layer() else { return };
+        if layer.mask.is_some() {
+            return;
+        }
+        let id = layer.id;
+        let size = self.doc.layer_source_size(layer);
+        let (w, h) = (size.x.round().max(1.0) as u32, size.y.round().max(1.0) as u32);
+        self.edit("Add mask", |d| {
+            if let Some(l) = d.layer_mut(id) {
+                l.mask = Some(ph_core::LayerMask { enabled: true, invert: false, width: w, height: h });
+            }
+        });
+        self.masks.insert(id, PaintRaster::filled(w, h, [1.0; 4]));
+        self.edit_mask = true;
+        self.status = "Mask added. Brush hides, eraser reveals (while \"Edit mask\" is on).".into();
+    }
+
+    pub fn delete_mask(&mut self) {
+        let Some(id) = self.selected else { return };
+        self.edit("Delete mask", |d| {
+            if let Some(l) = d.layer_mut(id) {
+                l.mask = None;
+            }
+        });
+        self.edit_mask = false;
+    }
+
+    /// Current frame of a layer's source (preview resolution for video).
+    pub fn layer_frame(&mut self, id: LayerId) -> Option<ph_media::Frame> {
+        let layer = self.doc.layer(id)?;
+        match &layer.content {
+            LayerContent::Media { media, .. } => {
+                let t = layer.media_time(self.time);
+                let m = self.doc.media(*media)?.clone();
+                self.media.frame(&m, t).map(|(_, f)| f)
+            }
+            LayerContent::Paint { .. } => self.paint.get(&id).map(PaintRaster::to_frame),
+            LayerContent::Solid { color, .. } => {
+                let c = color.at(self.time);
+                let px = [c[0] * c[3], c[1] * c[3], c[2] * c[3], c[3]].map(half::f16::from_f32);
+                Some(ph_media::Frame::new(1, 1, px.to_vec()))
+            }
+        }
+    }
+
+    /// Match the selected layer's colours to a reference layer (default: the layer below it).
+    pub fn match_colour(&mut self) -> Result<()> {
+        use crate::matching::{stats, transfer};
+        let id = self.selected.context("select the layer to adjust")?;
+        let idx = self.doc.layer_index(id).context("layer missing")?;
+        let reference = self
+            .match_reference
+            .filter(|r| *r != id && self.doc.layer(*r).is_some())
+            .or_else(|| idx.checked_sub(1).map(|i| self.doc.layers[i].id))
+            .context("add a background layer below this one (or pick a reference) first")?;
+        let src = self.layer_frame(id).context("this layer has no pixels yet (video still decoding?)")?;
+        let target = self.layer_frame(reference).context("reference layer has no pixels yet")?;
+        let mask = self.doc.layer(id).and_then(|l| l.mask.as_ref().filter(|m| m.enabled).map(|m| m.invert));
+        let raster = self.masks.get(&id);
+        let mask_fn = |u: f32, v: f32| -> f32 {
+            let Some(r) = raster else { return 1.0 };
+            let x = ((u * r.width as f32) as u32).min(r.width - 1);
+            let y = ((v * r.height as f32) as u32).min(r.height - 1);
+            let m = r.data[(y * r.width + x) as usize][0];
+            if mask == Some(true) { 1.0 - m } else { m }
+        };
+        let s = stats(&src, mask.map(|_| &mask_fn as &dyn Fn(f32, f32) -> f32));
+        let t = stats(&target, None);
+        if s.weight <= 0.0 || t.weight <= 0.0 {
+            anyhow::bail!("nothing visible to measure");
+        }
+        let (scale, offset) = transfer(&s, &t, self.match_mode);
+        let (time, auto) = (self.time, self.auto_key);
+        self.edit("Match colour", |d| {
+            if let Some(l) = d.layer_mut(id) {
+                l.grade.match_scale = scale;
+                l.grade.match_offset = offset;
+                if l.grade.match_amount.at(time) <= 0.0 {
+                    l.grade.match_amount.set(time, 1.0, auto);
+                }
+            }
+        });
+        let name = self.doc.layer(reference).map(|l| l.name.clone()).unwrap_or_default();
+        self.status = format!("Matched colour to \"{name}\" ({}). Use the Match amount slider to blend.", self.match_mode.label());
+        Ok(())
     }
 
     // ---------- playback ----------

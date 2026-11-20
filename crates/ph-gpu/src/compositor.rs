@@ -2,7 +2,7 @@
 //! each visible layer is blended onto a ping-pong accumulation target by a compute pass,
 //! then a display pass converts to sRGB for the viewer.
 
-use crate::pipelines::Pipelines;
+use crate::pipelines::{CompositeViews, Pipelines};
 use glam::{Affine2, Vec2};
 use half::f16;
 use ph_core::BlendMode;
@@ -21,6 +21,10 @@ pub struct LayerDraw {
     pub matrix: Affine2,
     pub opacity: f32,
     pub blend: BlendMode,
+    /// Key of an uploaded mask source (red channel = coverage), if any.
+    pub mask: Option<u64>,
+    pub mask_invert: bool,
+    pub grade: Option<ph_core::GradeSample>,
 }
 
 struct GpuSource {
@@ -46,6 +50,8 @@ pub struct Compositor {
     queue: wgpu::Queue,
     pipes: Pipelines,
     sampler: wgpu::Sampler,
+    /// 1×1 white texture bound when a layer has no mask.
+    white_view: wgpu::TextureView,
     sources: HashMap<u64, GpuSource>,
     targets: Option<Targets>,
     /// Bumped whenever the display texture is recreated (the UI must re-register it).
@@ -62,7 +68,10 @@ struct LayerParams {
     opacity: f32,
     blend: u32,
     perceptual: u32,
-    _pad: [u32; 3],
+    has_mask: u32,
+    mask_invert: u32,
+    has_grade: u32,
+    grade: [[f32; 4]; 8],
 }
 
 #[repr(C)]
@@ -102,11 +111,29 @@ impl Compositor {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let white = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("white"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: WORK_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &white, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            bytemuck::cast_slice(&[half::f16::ONE; 4]),
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(8), rows_per_image: Some(1) },
+            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        );
+        let white_view = white.create_view(&Default::default());
         Self {
             device: device.clone(),
             queue: queue.clone(),
             pipes: Pipelines::new(device),
             sampler,
+            white_view,
             sources: HashMap::new(),
             targets: None,
             display_generation: 0,
@@ -196,6 +223,7 @@ impl Compositor {
             if layer.opacity <= 0.0 {
                 continue;
             }
+            let mask_view = layer.mask.and_then(|k| self.sources.get(&k)).map(|m| &m.view);
             let inv = layer.matrix.inverse();
             let params = LayerParams {
                 inv0: [inv.matrix2.x_axis.x, inv.matrix2.x_axis.y, 0.0, 0.0],
@@ -205,18 +233,22 @@ impl Compositor {
                 opacity: layer.opacity.clamp(0.0, 1.0),
                 blend: layer.blend.shader_id(),
                 perceptual: u32::from(layer.blend.space() == ph_core::blend::BlendSpace::Perceptual),
-                _pad: [0; 3],
+                has_mask: u32::from(mask_view.is_some()),
+                mask_invert: u32::from(layer.mask_invert),
+                has_grade: u32::from(layer.grade.is_some()),
+                grade: layer.grade.map_or([[0.0; 4]; 8], |g| {
+                    [g.basic, g.lift, g.gamma, g.gain, g.offset, g.tone, g.match_scale, g.match_offset]
+                }),
             };
             let ubuf = self.pipes.uniform(&self.device, bytemuck::bytes_of(&params));
             let next = 1 - cur;
-            let bg = self.pipes.composite_bind_group(
-                &self.device,
-                &t.accum_views[cur],
-                &t.accum_views[next],
-                &src.view,
-                &self.sampler,
-                &ubuf,
-            );
+            let views = CompositeViews {
+                backdrop: &t.accum_views[cur],
+                dst: &t.accum_views[next],
+                src: &src.view,
+                mask: mask_view.unwrap_or(&self.white_view),
+            };
+            let bg = self.pipes.composite_bind_group(&self.device, &views, &self.sampler, &ubuf);
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("layer"), timestamp_writes: None });
             pass.set_pipeline(&self.pipes.composite);
             pass.set_bind_group(0, &bg, &[]);

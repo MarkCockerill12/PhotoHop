@@ -89,7 +89,7 @@ pub fn viewer(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     // Composite at the playhead (non-blocking: videos show the nearest decoded frame).
     let t = app.time;
     let media = &mut app.media;
-    render::composite(&mut app.viewer.gpu, &app.doc, t, &app.paint, |m, mt| media.frame(m, mt));
+    render::composite(&mut app.viewer.gpu, &app.doc, t, &app.paint, &app.masks, |m, mt| media.frame(m, mt));
     app.viewer.sync_texture(rs);
 
     let painter = ui.painter_at(rect);
@@ -162,6 +162,7 @@ fn start_drag(app: &mut App, p: egui::Pos2) -> Option<Drag> {
         Drag {
             mode,
             layer,
+            target_mask: false,
             start,
             position: l.map_or([0.0; 2], |l| l.transform.position.at(app.time)),
             scale: l.map_or([1.0; 2], |l| l.transform.scale.at(app.time)),
@@ -195,8 +196,16 @@ fn start_drag(app: &mut App, p: egui::Pos2) -> Option<Drag> {
         Tool::Brush | Tool::Eraser => {
             let id = app.selected?;
             let layer = app.doc.layer(id)?;
-            if !matches!(layer.content, LayerContent::Paint { .. }) || layer.locked {
-                app.status = "Select an unlocked paint layer to draw on (Layer > New paint layer).".into();
+            if layer.locked {
+                app.status = "This layer is locked.".into();
+                return None;
+            }
+            if app.edit_mask && layer.mask.is_some() {
+                app.masks.get_mut(&id)?.begin_stroke();
+                return Some(Drag { target_mask: true, ..base(DragMode::Paint, Some(id)) });
+            }
+            if !matches!(layer.content, LayerContent::Paint { .. }) {
+                app.status = "Brush paints on paint layers or masks: add a paint layer, or Add mask in the inspector.".into();
                 return None;
             }
             app.paint.get_mut(&id)?.begin_stroke();
@@ -257,9 +266,15 @@ fn update_drag(app: &mut App, d: Drag, screen: Vec2, shift: bool) {
             let scale = app.doc.layer_matrix(layer, t).matrix2.x_axis.length().max(1e-3);
             let mut brush = app.brush;
             brush.size /= scale;
-            let erase = app.tool == Tool::Eraser;
-            if let Some(r) = app.paint.get_mut(&id) {
-                r.stroke_to(local.x, local.y, &brush, erase);
+            let eraser = app.tool == Tool::Eraser;
+            if d.target_mask {
+                // Masks: brush hides (black), eraser reveals (white).
+                brush.color = if eraser { egui::Color32::WHITE } else { egui::Color32::BLACK };
+                if let Some(r) = app.masks.get_mut(&id) {
+                    r.stroke_to(local.x, local.y, &brush, false);
+                }
+            } else if let Some(r) = app.paint.get_mut(&id) {
+                r.stroke_to(local.x, local.y, &brush, eraser);
             }
         }
     }
@@ -269,10 +284,11 @@ fn finish_drag(app: &mut App) {
     let Some(d) = app.viewer.drag.take() else { return };
     match d.mode {
         DragMode::Paint => {
+            let rasters = if d.target_mask { &mut app.masks } else { &mut app.paint };
             if let Some(id) = d.layer
-                && let Some(patch) = app.paint.get_mut(&id).and_then(|r| r.end_stroke())
+                && let Some(patch) = rasters.get_mut(&id).and_then(|r| r.end_stroke())
             {
-                app.pixel_undo.push(PixelUndo::Stroke { layer: id, patch });
+                app.pixel_undo.push(PixelUndo::Stroke { layer: id, mask: d.target_mask, patch });
                 app.pixel_redo.clear();
                 app.dirty = true;
             }

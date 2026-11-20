@@ -17,6 +17,10 @@ pub fn paint_layer_path(project_path: &Path, id: LayerId) -> PathBuf {
     assets_dir(project_path).join(format!("paint-{}.png", id.0))
 }
 
+pub fn mask_path(project_path: &Path, id: LayerId) -> PathBuf {
+    assets_dir(project_path).join(format!("mask-{}.png", id.0))
+}
+
 fn relativize(path: &Path, base: &Path) -> PathBuf {
     path.strip_prefix(base).map(Path::to_path_buf).unwrap_or_else(|_| path.to_path_buf())
 }
