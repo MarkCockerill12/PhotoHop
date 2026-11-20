@@ -2,6 +2,7 @@
 
 mod colour;
 mod curves;
+mod glass;
 mod inspector;
 mod integration;
 mod layers;
@@ -59,6 +60,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     menu::export_window(app, ui.ctx());
     app.scopes.window(ui.ctx());
     menu::ai_window(app, ui.ctx());
+    glass::window(app, ui.ctx());
 
     if app.playing {
         ui.ctx().request_repaint();

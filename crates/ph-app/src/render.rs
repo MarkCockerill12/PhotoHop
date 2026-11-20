@@ -220,6 +220,17 @@ pub fn composite(
         keep.insert(key);
         let mut mask_srgb = false;
         let has_roto = layer.roto.iter().any(|r| r.active());
+        // "Replace window / screen": the glass is cut out of this layer on the CPU mask path.
+        let glass = layer.glass.as_ref().filter(|g| g.is_active());
+        let mut front: Vec<(u64, Frame)> = Vec::new();
+        if let Some(g) = glass {
+            for mid in &g.front {
+                if let Some(fr) = doc.media(*mid).and_then(|m| fetch(m, layer.media_time(t))) {
+                    front.push(fr);
+                }
+            }
+        }
+        let has_roto = has_roto || glass.is_some();
         // With roto shapes the base mask is read on the CPU and multiplied by the shapes.
         let mut base: Option<(u64, Frame, bool)> = None;
         let mask = match (&layer.mask, masks.get(&layer.id)) {
@@ -256,10 +267,12 @@ pub fn composite(
             }
             _ => None,
         };
+        let glass_sig = glass.map(|g| (crate::roto::shapes_signature(&g.panes, t), front.iter().map(|f| f.0).collect::<Vec<_>>()));
+        let glass_key = hash_of(("glass", layer.id, &glass_sig));
         let mask = if has_roto {
             let inv = layer.mask.as_ref().is_some_and(|m| m.invert);
-            let rkey = hash_of(("roto", layer.id, crate::roto::signature(layer, t), base.as_ref().map(|b| b.0), inv));
-            if !gpu.has_source(rkey, 0) {
+            let rkey = hash_of(("roto", layer.id, crate::roto::signature(layer, t), base.as_ref().map(|b| b.0), inv, &glass_sig));
+            if !gpu.has_source(rkey, 0) || (glass.is_some() && !gpu.has_source(glass_key, 0)) {
                 let (w, h) = match &base {
                     Some((_, f, _)) => (f.width, f.height),
                     None => {
@@ -267,7 +280,27 @@ pub fn composite(
                         (((size.x * k) as u32).max(1), ((size.y * k) as u32).max(1))
                     }
                 };
-                let cov = crate::roto::layer_coverage(layer, t, w, h, [size.x, size.y]).unwrap_or_default();
+                let n = (w * h) as usize;
+                let cov = crate::roto::layer_coverage(layer, t, w, h, [size.x, size.y]).unwrap_or_else(|| vec![1.0; n]);
+                // Glass that shows the view: panes minus anything tracked in front of them.
+                let glass_cov: Option<Vec<f32>> = glass.map(|g| {
+                    let mut gc = crate::roto::shapes_coverage(&g.panes, t, w, h, [size.x, size.y]).unwrap_or_else(|| vec![0.0; n]);
+                    for (_, f) in &front {
+                        for (i, v) in gc.iter_mut().enumerate() {
+                            let (x, y) = (i as u32 % w, i as u32 / w);
+                            let fx = ((x as f32 + 0.5) / w as f32 * f.width as f32) as u32;
+                            let fy = ((y as f32 + 0.5) / h as f32 * f.height as f32) as u32;
+                            let fi = ((fy.min(f.height - 1) * f.width + fx.min(f.width - 1)) * 4) as usize;
+                            let m = ph_media::color::linear_to_srgb(f.pixels[fi].to_f32().max(0.0)).clamp(0.0, 1.0);
+                            *v *= 1.0 - m;
+                        }
+                    }
+                    gc
+                });
+                if let Some(gc) = &glass_cov {
+                    let gpx: Vec<f16> = gc.iter().flat_map(|v| [*v, *v, *v, 1.0].map(f16::from_f32)).collect();
+                    gpu.upload(glass_key, 0, w, h, &gpx);
+                }
                 let invert_base = layer.mask.as_ref().is_some_and(|m| m.invert);
                 let px: Vec<f16> = cov
                     .iter()
@@ -278,13 +311,17 @@ pub fn composite(
                             let v = if *srgb { ph_media::color::linear_to_srgb(v.max(0.0)) } else { v }.clamp(0.0, 1.0);
                             if invert_base { 1.0 - v } else { v }
                         });
-                        let v = c * b;
+                        let cut = glass_cov.as_ref().map_or(1.0, |g| 1.0 - g[i]);
+                        let v = c * b * cut;
                         [v, v, v, 1.0].map(f16::from_f32)
                     })
                     .collect();
                 gpu.upload(rkey, 0, w, h, &px);
             }
             keep.insert(rkey);
+            if glass.is_some() {
+                keep.insert(glass_key);
+            }
             mask_srgb = false;
             Some(rkey)
         } else {
@@ -341,6 +378,61 @@ pub fn composite(
         let graded = layer.grade.enabled && !layer.grade.is_identity();
         let grade = graded.then(|| layer.grade.sample(t));
         let curves = (graded && !layer.grade.curves.is_identity()).then(|| layer.grade.curves.bake());
+        if let Some(g) = glass {
+            // The view clip, looped, tinted, under the layer.
+            if let Some(vm) = g.view.and_then(|id| doc.media(id)) {
+                let local = (t - layer.start).max(0.0);
+                let vt = match vm.kind {
+                    ph_core::MediaKind::Video { duration, .. } if g.loop_view && duration > 0.0 => local % duration,
+                    _ => local,
+                };
+                if let Some((vkey, frame)) = fetch(vm, vt) {
+                    if !gpu.has_source(vkey, 0) {
+                        gpu.upload(vkey, 0, frame.width, frame.height, &frame.pixels);
+                    }
+                    keep.insert(vkey);
+                    let vsize = Vec2::new(vm.width as f32, vm.height as f32);
+                    let b = g.brightness.at(t);
+                    let tint = ph_core::Grade { gain: ph_core::Animated::new([g.tint[0], g.tint[1], g.tint[2], b]), ..Default::default() };
+                    draws.push(LayerDraw {
+                        source: vkey,
+                        size: vsize,
+                        matrix: g.view_transform.matrix(t, vsize),
+                        opacity: layer.opacity.at(t),
+                        blend: ph_core::BlendMode::Normal,
+                        mask: None,
+                        mask_invert: false,
+                        mask_srgb: false,
+                        grade: (!tint.is_identity()).then(|| tint.sample(t)),
+                        curves: None,
+                        fx: None,
+                        normals: None,
+                        shadow: None,
+                        light: None,
+                    });
+                }
+            }
+            // The original glass (reflections, glare) screened over the view.
+            let refl = g.reflection.at(t);
+            if refl > 0.0 {
+                draws.push(LayerDraw {
+                    source: key,
+                    size,
+                    matrix,
+                    opacity: layer.opacity.at(t) * refl,
+                    blend: ph_core::BlendMode::Screen,
+                    mask: Some(glass_key),
+                    mask_invert: false,
+                    mask_srgb: false,
+                    grade,
+                    curves: curves.clone(),
+                    fx: None,
+                    normals: None,
+                    shadow: None,
+                    light: None,
+                });
+            }
+        }
         draws.push(LayerDraw {
             source: key,
             size,

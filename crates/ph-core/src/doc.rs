@@ -155,6 +155,9 @@ pub struct Layer {
     /// Set on an AI "remove object" patch: the layer whose object it paints out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch_of: Option<LayerId>,
+    /// "Replace window / screen" settings, when used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass: Option<crate::glass::Glass>,
 }
 
 impl Layer {
@@ -176,6 +179,7 @@ impl Layer {
             has_normals: false,
             roto: Vec::new(),
             patch_of: None,
+            glass: None,
         }
     }
 

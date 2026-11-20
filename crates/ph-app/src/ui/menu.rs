@@ -4,7 +4,7 @@ use crate::app::{App, Tool};
 use crate::export::ImageFormat;
 use ph_media::VideoCodec;
 
-const MEDIA_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "tif", "tiff", "exr", "mp4", "mov", "mkv", "webm", "avi", "m4v"];
+pub const MEDIA_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "tif", "tiff", "exr", "mp4", "mov", "mkv", "webm", "avi", "m4v"];
 
 pub fn import_dialog(app: &mut App) {
     let scripted = app.dialog_answers.pop_front().map(|p| vec![p]);
@@ -142,6 +142,15 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.status = format!("AI: {e:#}");
             }
+            if ui.add_enabled(!busy, egui::Button::new("Replace window / screen…")).on_hover_text("Show another clip through a window, TV or phone screen (settings in the inspector)").clicked() {
+                if let Some(id) = app.selected {
+                    app.glass_setup(id);
+                    app.glass_panel = true;
+                    app.status = "Replace window / screen: follow the steps in the panel.".into();
+                } else {
+                    app.status = "Select the layer with the window or screen first.".into();
+                }
+            }
             if ui.add_enabled(!busy, egui::Button::new("Video: track a region… (draw a box)")).clicked() {
                 app.ai.picking_box = true;
                 app.status = "Drag a box around the region to track (e.g. the window glass) on the selected video layer.".into();
@@ -259,7 +268,7 @@ pub fn ai_window(app: &mut App, ctx: &egui::Context) {
         ui.separator();
         ui.label("Remove an object (AI repaints only that object's area, as a separate patch layer):");
         ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut app.ai.remove_prompt);
+            ui.add(egui::TextEdit::singleline(&mut app.ai.remove_prompt).hint_text("e.g. toy gun"));
             if ui.add_enabled(!busy, egui::Button::new("Remove")).clicked() {
                 let p = app.ai.remove_prompt.trim().to_owned();
                 if let Err(e) = app.start_ai(crate::ai::AiTask::Remove(p)) {

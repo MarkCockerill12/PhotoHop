@@ -83,7 +83,12 @@ pub fn fill(w: u32, h: u32, poly: &[[f32; 2]]) -> Vec<f32> {
 /// Combined coverage of the layer's roto shapes at `t`, at mask resolution `w`×`h` for a layer
 /// whose source is `src` pixels. `None` when the layer has no active shapes.
 pub fn layer_coverage(layer: &Layer, t: f64, w: u32, h: u32, src: [f32; 2]) -> Option<Vec<f32>> {
-    let shapes: Vec<_> = layer.roto.iter().filter(|s| s.active()).collect();
+    shapes_coverage(&layer.roto, t, w, h, src)
+}
+
+/// Combined coverage of any list of shapes (layer roto shapes, glass panes).
+pub fn shapes_coverage(shapes: &[ph_core::RotoShape], t: f64, w: u32, h: u32, src: [f32; 2]) -> Option<Vec<f32>> {
+    let shapes: Vec<_> = shapes.iter().filter(|s| s.active()).collect();
     if shapes.is_empty() {
         return None;
     }
@@ -111,9 +116,13 @@ pub fn layer_coverage(layer: &Layer, t: f64, w: u32, h: u32, src: [f32; 2]) -> O
 
 /// A hash of everything that changes the roto coverage at `t` (cache key for the GPU mask).
 pub fn signature(layer: &Layer, t: f64) -> u64 {
+    shapes_signature(&layer.roto, t)
+}
+
+pub fn shapes_signature(shapes: &[ph_core::RotoShape], t: f64) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hsh = std::collections::hash_map::DefaultHasher::new();
-    for s in layer.roto.iter().filter(|s| s.active()) {
+    for s in shapes.iter().filter(|s| s.active()) {
         for p in &s.path.at(t).0 {
             for v in p.p.iter().chain(&p.h_in).chain(&p.h_out) {
                 v.to_bits().hash(&mut hsh);

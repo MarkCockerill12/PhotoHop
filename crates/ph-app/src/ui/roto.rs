@@ -9,6 +9,28 @@ use ph_core::{Animated, LayerId, RotoMode, RotoPath, RotoPoint, RotoShape};
 
 const HIT_R: f32 = 8.0;
 
+/// Which shape list the pen edits: the layer's own roto mask or its glass panes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum RotoTarget {
+    #[default]
+    Mask,
+    Glass,
+}
+
+pub fn shapes(layer: &ph_core::Layer, t: RotoTarget) -> &[RotoShape] {
+    match t {
+        RotoTarget::Mask => &layer.roto,
+        RotoTarget::Glass => layer.glass.as_ref().map_or(&[], |g| g.panes.as_slice()),
+    }
+}
+
+pub fn shapes_mut(layer: &mut ph_core::Layer, t: RotoTarget) -> Option<&mut Vec<RotoShape>> {
+    match t {
+        RotoTarget::Mask => Some(&mut layer.roto),
+        RotoTarget::Glass => layer.glass.as_mut().map(|g| &mut g.panes),
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RotoDrag {
     Anchor(usize),
@@ -43,7 +65,7 @@ fn sub(a: [f32; 2], b: [f32; 2]) -> [f32; 2] {
 fn active(app: &App) -> Option<(LayerId, usize)> {
     let id = app.selected?;
     let idx = app.roto_edit?;
-    (idx < app.doc.layer(id)?.roto.len()).then_some((id, idx))
+    (idx < shapes(app.doc.layer(id)?, app.roto_target).len()).then_some((id, idx))
 }
 
 fn hit(app: &App, m: &Affine2, path: &RotoPath, s: egui::Pos2) -> Option<RotoDrag> {
@@ -60,9 +82,9 @@ fn hit(app: &App, m: &Affine2, path: &RotoPath, s: egui::Pos2) -> Option<RotoDra
 
 /// Change the path at the current time (keys it when auto-key is on or it is already animated).
 fn edit_now(app: &mut App, id: LayerId, idx: usize, f: impl FnOnce(&mut RotoPath)) {
-    let (t, auto) = (app.time, app.auto_key);
+    let (t, auto, tgt) = (app.time, app.auto_key, app.roto_target);
     if let Some(l) = app.gesture("Edit roto shape").layer_mut(id)
-        && let Some(s) = l.roto.get_mut(idx)
+        && let Some(s) = shapes_mut(l, tgt).and_then(|v| v.get_mut(idx))
     {
         let mut p = s.path.at(t);
         f(&mut p);
@@ -72,8 +94,9 @@ fn edit_now(app: &mut App, id: LayerId, idx: usize, f: impl FnOnce(&mut RotoPath
 
 /// Structural change (add / remove points) applied to every key so they keep matching.
 fn edit_all(app: &mut App, id: LayerId, idx: usize, label: &str, f: impl Fn(&mut RotoPath)) {
+    let tgt = app.roto_target;
     app.edit(label, |d| {
-        if let Some(s) = d.layer_mut(id).and_then(|l| l.roto.get_mut(idx)) {
+        if let Some(s) = d.layer_mut(id).and_then(|l| shapes_mut(l, tgt)).and_then(|v| v.get_mut(idx)) {
             f(&mut s.path.base);
             for k in &mut s.path.keys {
                 f(&mut k.value);
@@ -105,7 +128,7 @@ pub fn start(app: &mut App, p: egui::Pos2) -> Option<Drag> {
     let lp = to_layer(app, &m, p);
     let t = app.time;
     if let Some((_, idx)) = active(app) {
-        let shape = &app.doc.layer(id)?.roto[idx];
+        let shape = &shapes(app.doc.layer(id)?, app.roto_target)[idx];
         let path = shape.path.at(t);
         let closed = shape.closed;
         if let Some(h) = hit(app, &m, &path, p) {
@@ -121,12 +144,19 @@ pub fn start(app: &mut App, p: egui::Pos2) -> Option<Drag> {
             return Some(make_drag(app, id, RotoDrag::NewHandles(n), p));
         }
     }
-    let n = layer.roto.len();
+    let tgt = app.roto_target;
+    if tgt == RotoTarget::Glass && layer.glass.is_none() {
+        app.status = "Set up Replace window / screen in the inspector first.".into();
+        return None;
+    }
+    let n = shapes(layer, tgt).len();
     app.edit("New roto shape", |d| {
         if let Some(l) = d.layer_mut(id) {
-            let mut s = RotoShape::new(format!("Shape {}", n + 1));
+            let mut s = RotoShape::new(if tgt == RotoTarget::Glass { format!("Pane {}", n + 1) } else { format!("Shape {}", n + 1) });
             s.path.base = RotoPath(vec![RotoPoint::corner(lp)]);
-            l.roto.push(s);
+            if let Some(v) = shapes_mut(l, tgt) {
+                v.push(s);
+            }
         }
     });
     app.roto_edit = Some(n);
@@ -168,8 +198,9 @@ pub fn finish(app: &mut App) {
 }
 
 fn close(app: &mut App, id: LayerId, idx: usize) {
+    let tgt = app.roto_target;
     app.edit("Close roto shape", |d| {
-        if let Some(s) = d.layer_mut(id).and_then(|l| l.roto.get_mut(idx)) {
+        if let Some(s) = d.layer_mut(id).and_then(|l| shapes_mut(l, tgt)).and_then(|v| v.get_mut(idx)) {
             s.closed = true;
         }
     });
@@ -182,7 +213,8 @@ pub fn keys(app: &mut App, ctx: &egui::Context) -> bool {
     let (enter, esc, del) = ctx.input(|i| {
         (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
     });
-    let Some(shape) = app.doc.layer(id).map(|l| l.roto[idx].clone()) else { return false };
+    let tgt = app.roto_target;
+    let Some(shape) = app.doc.layer(id).and_then(|l| shapes(l, tgt).get(idx).cloned()) else { return false };
     let path = shape.path.at(app.time);
     if enter && !shape.closed && path.0.len() >= 3 {
         close(app, id, idx);
@@ -217,7 +249,17 @@ pub fn draw(app: &App, painter: &egui::Painter, hover: Option<egui::Pos2>) {
     let Some(m) = layer_xf(app, id) else { return };
     let editing = active(app).map(|a| a.1);
     let accent = egui::Color32::from_rgb(255, 120, 200);
-    for (i, s) in layer.roto.iter().enumerate() {
+    // While the Replace window panel is open, outline the glass panes (cyan) for orientation.
+    if app.glass_panel && !(app.tool == crate::app::Tool::Roto && app.roto_target == RotoTarget::Glass) {
+        for s in shapes(layer, RotoTarget::Glass).iter().filter(|s| s.enabled) {
+            let poly: Vec<egui::Pos2> = s.polygon(app.time, 24).into_iter().map(|p| to_screen(app, &m, p)).collect();
+            let col = if s.mode == ph_core::RotoMode::Subtract { egui::Color32::from_rgb(255, 196, 64) } else { egui::Color32::from_rgb(90, 220, 255) };
+            if s.closed && poly.len() >= 3 {
+                painter.add(egui::Shape::closed_line(poly, egui::Stroke::new(1.5, col)));
+            }
+        }
+    }
+    for (i, s) in shapes(layer, app.roto_target).iter().enumerate() {
         let is_active = editing == Some(i);
         if !is_active && !(app.tool == crate::app::Tool::Roto && s.enabled) {
             continue;
@@ -259,8 +301,8 @@ fn shape_slider(app: &mut App, ui: &mut egui::Ui, (id, idx): (LayerId, usize), l
     let mut v = value;
     let r = ui.add(egui::Slider::new(&mut v, range).max_decimals(1));
     if r.changed() {
-        let (t, auto) = (app.time, app.auto_key);
-        if let Some(s) = app.gesture(label).layer_mut(id).and_then(|l| l.roto.get_mut(idx)) {
+        let (t, auto, tgt) = (app.time, app.auto_key, app.roto_target);
+        if let Some(s) = app.gesture(label).layer_mut(id).and_then(|l| shapes_mut(l, tgt)).and_then(|v| v.get_mut(idx)) {
             pick(s).set(t, v, auto);
         }
     }
@@ -271,26 +313,37 @@ fn shape_slider(app: &mut App, ui: &mut egui::Ui, (id, idx): (LayerId, usize), l
 }
 
 pub fn section(app: &mut App, ui: &mut egui::Ui, layer: &ph_core::Layer) {
+    egui::CollapsingHeader::new(format!("Roto shapes ({})", layer.roto.len())).default_open(!layer.roto.is_empty()).show(ui, |ui| {
+        shape_list(app, ui, layer, RotoTarget::Mask);
+    });
+}
+
+/// The editable list of shapes (layer roto mask or glass panes) with the pen hint.
+pub fn shape_list(app: &mut App, ui: &mut egui::Ui, layer: &ph_core::Layer, target: RotoTarget) {
     let id = layer.id;
     let t = app.time;
-    egui::CollapsingHeader::new(format!("Roto shapes ({})", layer.roto.len())).default_open(!layer.roto.is_empty()).show(ui, |ui| {
+    let list = shapes(layer, target).to_vec();
+    let editing_here = app.roto_target == target;
+    {
         ui.label(egui::RichText::new("Pen (P): click points, drag to curve, click the first point to close. The diamond button keys the shape so it can follow you.").weak().small());
-        if ui.button("New shape").clicked() {
+        if ui.button(if target == RotoTarget::Glass { "Draw a pane" } else { "New shape" }).clicked() {
             app.tool = crate::app::Tool::Roto;
+            app.roto_target = target;
             app.roto_edit = None;
             app.status = "Roto: click on the canvas to place the first point.".into();
         }
         let mut remove = None;
-        for (i, s) in layer.roto.iter().enumerate() {
-            let editing = app.roto_edit == Some(i);
+        for (i, s) in list.iter().enumerate() {
+            let editing = editing_here && app.roto_edit == Some(i);
             ui.horizontal(|ui| {
                 if ui.selectable_label(editing, &s.name).on_hover_text("Edit this shape with the Roto pen").clicked() {
                     app.roto_edit = Some(i);
+                    app.roto_target = target;
                     app.tool = crate::app::Tool::Roto;
                 }
                 let mut on = s.enabled;
                 if ui.checkbox(&mut on, "").on_hover_text("Enabled").changed() {
-                    app.edit("Toggle roto shape", |d| d.layer_mut(id).and_then(|l| l.roto.get_mut(i)).map_or((), |s| s.enabled = on));
+                    app.edit("Toggle roto shape", |d| d.layer_mut(id).and_then(|l| shapes_mut(l, target)).and_then(|v| v.get_mut(i)).map_or((), |s| s.enabled = on));
                 }
                 let mut mode = s.mode;
                 egui::ComboBox::from_id_salt(("roto_mode", i)).width(78.0).selected_text(if mode == RotoMode::Add { "Add" } else { "Subtract" }).show_ui(ui, |ui| {
@@ -298,16 +351,16 @@ pub fn section(app: &mut App, ui: &mut egui::Ui, layer: &ph_core::Layer) {
                     ui.selectable_value(&mut mode, RotoMode::Subtract, "Subtract");
                 });
                 if mode != s.mode {
-                    app.edit("Roto mode", |d| d.layer_mut(id).and_then(|l| l.roto.get_mut(i)).map_or((), |s| s.mode = mode));
+                    app.edit("Roto mode", |d| d.layer_mut(id).and_then(|l| shapes_mut(l, target)).and_then(|v| v.get_mut(i)).map_or((), |s| s.mode = mode));
                 }
                 let mut inv = s.invert;
                 if ui.checkbox(&mut inv, "Inv").changed() {
-                    app.edit("Invert roto shape", |d| d.layer_mut(id).and_then(|l| l.roto.get_mut(i)).map_or((), |s| s.invert = inv));
+                    app.edit("Invert roto shape", |d| d.layer_mut(id).and_then(|l| shapes_mut(l, target)).and_then(|v| v.get_mut(i)).map_or((), |s| s.invert = inv));
                 }
                 let keyed = s.path.key_index_at(t).is_some();
                 let key_txt = egui_material_icons::icons::ICON_DIAMOND.rich_text().color(if keyed { egui::Color32::from_rgb(255, 196, 64) } else { egui::Color32::GRAY });
                 if ui.button(key_txt).on_hover_text("Keyframe the shape here").clicked() {
-                    app.edit("Key roto shape", |d| d.layer_mut(id).and_then(|l| l.roto.get_mut(i)).map_or((), |s| s.path.toggle_key(t)));
+                    app.edit("Key roto shape", |d| d.layer_mut(id).and_then(|l| shapes_mut(l, target)).and_then(|v| v.get_mut(i)).map_or((), |s| s.path.toggle_key(t)));
                 }
                 if ui.button(egui_material_icons::icons::ICON_DELETE.rich_text()).on_hover_text("Delete shape").clicked() {
                     remove = Some(i);
@@ -330,15 +383,15 @@ pub fn section(app: &mut App, ui: &mut egui::Ui, layer: &ph_core::Layer) {
         }
         if let Some(i) = remove {
             app.edit("Delete roto shape", |d| {
-                if let Some(l) = d.layer_mut(id)
-                    && i < l.roto.len()
+                if let Some(v) = d.layer_mut(id).and_then(|l| shapes_mut(l, target))
+                    && i < v.len()
                 {
-                    l.roto.remove(i);
+                    v.remove(i);
                 }
             });
             app.roto_edit = None;
         }
-    });
+    }
 }
 
 #[cfg(test)]

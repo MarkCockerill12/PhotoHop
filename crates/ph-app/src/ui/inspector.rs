@@ -161,6 +161,7 @@ pub fn inspector(app: &mut App, ui: &mut egui::Ui) {
     crate::ui::colour::colour_section(app, ui, &layer);
     ui.separator();
     crate::ui::roto::section(app, ui, &layer);
+    crate::ui::glass::section(app, ui, &layer);
     crate::ui::integration::integration_section(app, ui, &layer);
 
     ui.separator();

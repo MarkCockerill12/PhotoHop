@@ -80,6 +80,10 @@ pub struct App {
     pub select_shape: crate::selection::SelectShape,
     /// Roto shape being edited (index into the selected layer's shapes).
     pub roto_edit: Option<usize>,
+    /// Which shape list the roto pen edits (the layer's mask or its glass panes).
+    pub roto_target: crate::ui::roto::RotoTarget,
+    /// The floating "Replace window / screen" panel is open.
+    pub glass_panel: bool,
     /// Pre-answered file dialogs (UI automation, see `script.rs`).
     pub dialog_answers: std::collections::VecDeque<PathBuf>,
     pub wand_threshold: f32,
@@ -138,6 +142,8 @@ impl App {
             curve_channel: Default::default(),
             select_shape: Default::default(),
             roto_edit: None,
+            roto_target: Default::default(),
+            glass_panel: false,
             dialog_answers: Default::default(),
             wand_threshold: 0.12,
             select_feather: 0.0,
@@ -339,9 +345,9 @@ impl App {
         self.dialog_answers.pop_front().or_else(show)
     }
 
-    pub fn import(&mut self, path: &Path) -> Result<()> {
-        let first = self.doc.layers.is_empty();
-        let media = if ph_media::video::is_video_path(path) {
+    /// A media reference for a file (probed, not yet added to the project).
+    pub fn media_ref(path: &Path) -> Result<MediaRef> {
+        Ok(if ph_media::video::is_video_path(path) {
             let info = ph_media::video::probe(path)?;
             MediaRef {
                 id: MediaId::new(),
@@ -353,7 +359,12 @@ impl App {
         } else {
             let (w, h) = ph_media::image_io::image_dimensions(path)?;
             MediaRef { id: MediaId::new(), path: path.to_path_buf(), kind: MediaKind::Image, width: w, height: h }
-        };
+        })
+    }
+
+    pub fn import(&mut self, path: &Path) -> Result<()> {
+        let first = self.doc.layers.is_empty();
+        let media = Self::media_ref(path)?;
         let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Layer".into());
         let mid = media.id;
         let video = match media.kind {

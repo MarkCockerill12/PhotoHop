@@ -30,6 +30,10 @@ pub enum AiTask {
     CameraSolve,
     /// 3D body motion of the person in a video layer (SAM 3D Body) for the Blender bridge.
     BodyMotion,
+    /// Find window panes / screens (SAM 3) as glass shapes for "Replace window / screen".
+    FindGlass(String),
+    /// Track something in front of the glass (a box, SAM 2.1) so it stays in front of the view.
+    GlassFront([f32; 4]),
 }
 
 impl AiTask {
@@ -44,11 +48,13 @@ impl AiTask {
             Self::AutoColour => "AI auto colour".into(),
             Self::CameraSolve => "AI camera solve".into(),
             Self::BodyMotion => "AI body motion".into(),
+            Self::FindGlass(_) => "AI find glass".into(),
+            Self::GlassFront(_) => "AI keep in front".into(),
         }
     }
 
     fn is_video(&self) -> bool {
-        matches!(self, Self::TrackBox(_) | Self::VideoCutout | Self::CameraSolve | Self::BodyMotion)
+        matches!(self, Self::TrackBox(_) | Self::VideoCutout | Self::CameraSolve | Self::BodyMotion | Self::GlassFront(_))
     }
 }
 
@@ -71,17 +77,30 @@ pub struct AiState {
     pub python: String,
     pub prompt: String,
     pub remove_prompt: String,
+    /// What to look for when finding glass ("window pane", "tv screen", ...).
+    pub glass_prompt: String,
     pub show_dialog: bool,
     pub job: Option<AiJob>,
     /// Next viewer drag draws a box for region tracking.
     pub picking_box: bool,
+    /// The box being drawn marks something in front of the glass (not a region to track as a mask).
+    pub box_for_glass: bool,
 }
 
 impl Default for AiState {
     fn default() -> Self {
         let python = std::env::var("PHOTOHOP_AI_PYTHON")
             .unwrap_or_else(|_| if cfg!(windows) { "python".into() } else { "python3".into() });
-        Self { python, prompt: "person".into(), remove_prompt: "toy gun".into(), show_dialog: false, job: None, picking_box: false }
+        Self {
+            python,
+            prompt: "person".into(),
+            remove_prompt: String::new(),
+            glass_prompt: "window pane".into(),
+            show_dialog: false,
+            job: None,
+            picking_box: false,
+            box_for_glass: false,
+        }
     }
 }
 
@@ -186,6 +205,7 @@ impl App {
             AiTask::Normals => dir.join(format!("normals-{}.png", id.0)),
             AiTask::CameraSolve => dir.join(format!("camera-{stamp}.json")),
             AiTask::BodyMotion => dir.join(format!("body-{stamp}.json")),
+            AiTask::FindGlass(_) => dir.join(format!("glass-{stamp}.json")),
             t if t.is_video() => dir.join(format!("maskvideo-{}-{stamp}.mp4", id.0)),
             AiTask::Remove(_) => dir.join(format!("patch-{}-{stamp}.png", id.0)),
             _ => dir.join(format!("mask-{}.png", id.0)),
@@ -200,7 +220,11 @@ impl App {
                 args.extend(["--prompt".into(), prompt.clone()]);
             }
             AiTask::Normals => args[0] = "normals".into(),
-            AiTask::TrackBox(b) => {
+            AiTask::FindGlass(prompt) => {
+                args[0] = "find-glass".into();
+                args.extend(["--prompt".into(), prompt.clone()]);
+            }
+            AiTask::TrackBox(b) | AiTask::GlassFront(b) => {
                 args[0] = "track".into();
                 args.extend(["--box".into(), format!("{},{},{},{}", b[0], b[1], b[2], b[3])]);
             }
@@ -347,6 +371,28 @@ impl App {
                     v["travel_m"].as_f64().unwrap_or(0.0),
                     if v["ground"].as_bool() == Some(true) { ", floor found" } else { "" }
                 ));
+            }
+            if let AiTask::FindGlass(_) = &job.task {
+                let n = self.glass_apply_found(job.layer, &job.output)?;
+                return Ok(if n == 0 {
+                    "AI found no glass with that description. Try \"window\", \"screen\" or \"glass\", or draw the panes with the pen.".into()
+                } else {
+                    format!("Found {n} pane(s) as editable glass shapes. Choose what to show through them under Replace window / screen.")
+                });
+            }
+            if let AiTask::GlassFront(_) = &job.task {
+                let info = ph_media::video::probe(&job.output)?;
+                let media = ph_core::MediaRef {
+                    id: ph_core::MediaId::new(),
+                    path: job.output.clone(),
+                    kind: ph_core::MediaKind::Video { duration: info.duration, fps: info.fps, has_audio: false },
+                    width: info.width,
+                    height: info.height,
+                };
+                let mid = media.id;
+                self.edit("AI keep in front", |d| d.media.push(media));
+                self.glass_add_front(job.layer, mid);
+                return Ok(format!("Tracked in {:.0}s: it now stays in front of the view.", v["seconds"].as_f64().unwrap_or(0.0)));
             }
             if job.task.is_video() {
                 let info = ph_media::video::probe(&job.output)?;

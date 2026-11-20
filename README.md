@@ -26,6 +26,13 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
   scene right around you, like a colourist would; also colour cast only, tone only, or full transfer
 - Layer masks: paint to hide (brush) or reveal (eraser), invert, toggle
 - Selections straight into masks (M): rectangle, ellipse, lasso, magic wand; Shift adds, Alt subtracts, feather
+- **Replace window / screen** (AI menu): show another clip through a window, TV or phone screen in
+  four steps: *Find with AI* turns each pane into an editable shape, choose the clip (auto-fitted,
+  looped), set how much reflection stays on the glass, and box anything moving in front of it so
+  AI keeps it on top
+- **Shadows on me** (Integration): leaf or window shadows in the scene fall on you too. PhotoHop
+  reads where the ground is sunlit and looks it up along your cast-shadow direction from the bottom
+  of your silhouette, so the gaps in the leaves line up; your own shadow only darkens sunlit ground
 - Bezier roto shapes (P): click points, drag curve handles, close on the first point; Add / Subtract,
   invert, feather, opacity; keyframe the whole shape (◆) so it follows motion. Combined with AI / painted masks
 - Scopes (S): waveform, RGB parade, vectorscope with skin-tone line, histogram

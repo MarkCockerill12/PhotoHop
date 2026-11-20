@@ -371,8 +371,12 @@ fn finish_drag(app: &mut App) {
                 let (lo, hi) = (p.min(q), p.max(q));
                 if (hi - lo).min_element() < 4.0 {
                     app.status = "Box too small — drag a rectangle around the region to track.".into();
-                } else if let Err(e) = app.start_ai(crate::ai::AiTask::TrackBox([lo.x, lo.y, hi.x, hi.y])) {
-                    app.status = format!("AI: {e:#}");
+                } else {
+                    let b = [lo.x, lo.y, hi.x, hi.y];
+                    let task = if std::mem::take(&mut app.ai.box_for_glass) { crate::ai::AiTask::GlassFront(b) } else { crate::ai::AiTask::TrackBox(b) };
+                    if let Err(e) = app.start_ai(task) {
+                        app.status = format!("AI: {e:#}");
+                    }
                 }
             }
         }

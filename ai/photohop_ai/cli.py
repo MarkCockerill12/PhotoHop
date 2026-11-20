@@ -43,6 +43,13 @@ def cmd_segment(args) -> dict:
     return {"output": args.output, "instances": n, "coverage": cover}
 
 
+def cmd_find_glass(args) -> dict:
+    from .segment import find_glass
+
+    info = find_glass(args.input, args.output, prompt=args.prompt, device=_device())
+    return {"output": args.output, **info}
+
+
 def cmd_normals(args) -> dict:
     from .normals import normals
 
@@ -154,12 +161,16 @@ def main(argv=None) -> int:
     bm.add_argument("output", help="body.json (body.obj and body.pc2 are written next to it)")
     bm.add_argument("--mask", required=True, help="mask video of the person (PhotoHop video cutout)")
     bm.add_argument("--camera", default=None, help="camera.json from camera-solve (lens)")
+    fg = sub.add_parser("find-glass", help="window panes / screens as polygons (SAM 3) -> JSON")
+    fg.add_argument("input")
+    fg.add_argument("output")
+    fg.add_argument("--prompt", default="window pane")
     args = p.parse_args(argv)
     t0 = time.time()
     try:
         cmds = {"info": cmd_info, "matte": cmd_matte, "segment": cmd_segment, "normals": cmd_normals,
                 "track": cmd_track, "video-matte": cmd_video_matte, "remove": cmd_remove,
-                "harmonize": cmd_harmonize, "camera-solve": cmd_camera, "body-motion": cmd_body}
+                "harmonize": cmd_harmonize, "camera-solve": cmd_camera, "body-motion": cmd_body, "find-glass": cmd_find_glass}
         result = cmds[args.cmd](args)
         result.update(ok=True, seconds=round(time.time() - t0, 2))
     except Exception as e:  # noqa: BLE001 - report every failure as JSON for the app
