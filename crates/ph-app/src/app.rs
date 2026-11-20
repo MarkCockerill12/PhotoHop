@@ -287,6 +287,23 @@ impl App {
                 *path = dest;
             }
         }
+        // Image sequences outside the project (Blender renders) are generated, not source media:
+        // copy them into the assets too so the project runs anywhere.
+        let project_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        for m in &mut self.doc.media {
+            if ph_media::video::is_sequence_pattern(&m.path) && !m.path.starts_with(&project_dir) {
+                let files = ph_media::video::sequence_files(&m.path);
+                if files.is_empty() {
+                    continue;
+                }
+                let folder = assets.join(format!("sequence-{}", m.id.0));
+                std::fs::create_dir_all(&folder)?;
+                for (_, f) in &files {
+                    std::fs::copy(f, folder.join(f.file_name().context("sequence frame name")?)).context("copying image sequence into project assets")?;
+                }
+                m.path = folder.join(m.path.file_name().context("sequence pattern")?);
+            }
+        }
         project_file::save(&self.doc, &path)?;
         for (id, raster) in &self.paint {
             if self.doc.layer(*id).is_some() {
