@@ -1,5 +1,8 @@
 //! PhotoHop — put yourself into any scene, photo or video.
 
+// GUI app: no console window on Windows release builds.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod ai;
 mod app;
 mod export;

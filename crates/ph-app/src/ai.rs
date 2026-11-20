@@ -9,7 +9,6 @@ use crossbeam_channel::{Receiver, unbounded};
 use ph_core::LayerId;
 use ph_core::doc::LayerContent;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AiTask {
@@ -59,7 +58,7 @@ fn temp_dir() -> Result<PathBuf> {
 
 /// Run the sidecar and parse its single JSON result line.
 fn run_sidecar(python: &str, args: &[String]) -> Result<serde_json::Value, String> {
-    let out = Command::new(python)
+    let out = ph_media::process::command(python)
         .args(["-m", "photohop_ai.cli"])
         .args(args)
         .output()

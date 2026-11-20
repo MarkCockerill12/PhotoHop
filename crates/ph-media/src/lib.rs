@@ -7,6 +7,7 @@
 
 pub mod color;
 pub mod image_io;
+pub mod process;
 pub mod video;
 
 pub use image_io::{Frame, load_image, save_frame};

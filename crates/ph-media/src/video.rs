@@ -7,7 +7,7 @@ use crate::image_io::Frame;
 use anyhow::{Context, Result, anyhow, bail};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 
 pub const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "mkv", "webm", "avi", "m4v"];
 
@@ -17,12 +17,12 @@ pub fn is_video_path(path: &Path) -> bool {
         .is_some_and(|e| VIDEO_EXTENSIONS.contains(&e.as_str()))
 }
 
-fn ffmpeg_bin() -> String {
-    std::env::var("PHOTOHOP_FFMPEG").unwrap_or_else(|_| "ffmpeg".into())
+fn ffmpeg_bin() -> std::path::PathBuf {
+    crate::process::tool_path("ffmpeg", "PHOTOHOP_FFMPEG")
 }
 
-fn ffprobe_bin() -> String {
-    std::env::var("PHOTOHOP_FFPROBE").unwrap_or_else(|_| "ffprobe".into())
+fn ffprobe_bin() -> std::path::PathBuf {
+    crate::process::tool_path("ffprobe", "PHOTOHOP_FFPROBE")
 }
 
 #[derive(Clone, Debug)]
@@ -48,7 +48,7 @@ fn parse_rate(s: &str) -> Option<f64> {
 }
 
 pub fn probe(path: &Path) -> Result<VideoInfo> {
-    let out = Command::new(ffprobe_bin())
+    let out = crate::process::command(ffprobe_bin())
         .args(["-v", "error", "-show_streams", "-show_format", "-of", "json"])
         .arg(path)
         .output()
@@ -122,7 +122,7 @@ impl VideoReader {
     fn spawn_at(&mut self, frame: u64) -> Result<()> {
         self.stop();
         let t = frame as f64 / self.info.fps;
-        let mut cmd = Command::new(ffmpeg_bin());
+        let mut cmd = crate::process::command(ffmpeg_bin());
         cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin"]);
         if t > 0.0 {
             cmd.args(["-ss", &format!("{t:.6}")]);
@@ -223,7 +223,7 @@ impl VideoWriter {
         audio_from: Option<(&Path, f64)>,
     ) -> Result<Self> {
         // yuv420p needs even dimensions.
-        let mut cmd = Command::new(ffmpeg_bin());
+        let mut cmd = crate::process::command(ffmpeg_bin());
         cmd.args(["-hide_banner", "-loglevel", "error", "-y"]);
         cmd.args(["-f", "rawvideo", "-pix_fmt", "rgba", "-s", &format!("{width}x{height}")]);
         cmd.args(["-r", &format!("{fps}"), "-i", "-"]);

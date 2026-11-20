@@ -33,7 +33,15 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
   ProRes 4444 with alpha, keeping the original audio
 - Project files (`.phop`) that store media paths relative to the project
 
-## Install & run
+## Download
+
+Grab the latest build from [Releases](https://github.com/MarkCockerill12/PhotoHop/releases):
+
+- **Windows:** `PhotoHop-…-windows-x86_64.zip` — unzip and run `photohop.exe` (FFmpeg is included).
+- **Linux:** `PhotoHop-…-linux-x86_64.tar.gz` — unpack and run `./photohop` (install FFmpeg from your
+  distro, e.g. `sudo dnf install ffmpeg` or `sudo apt install ffmpeg`).
+
+## Build from source
 
 PhotoHop runs on **Linux and Windows** (any GPU with Vulkan, DirectX 12 or Metal).
 
@@ -98,4 +106,5 @@ photo on a laptop) or much faster on an NVIDIA GPU.
 
 ## Licence
 
-GPL-3.0-or-later — see [LICENSE](LICENSE).
+GPL-3.0-or-later — see [LICENSE](LICENSE). The Windows download bundles FFmpeg (GPL build from
+[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), source and licence available there).
