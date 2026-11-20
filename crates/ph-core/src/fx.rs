@@ -131,6 +131,31 @@ pub struct LayerFx {
     pub posterize: f32,
     pub shadow: Shadow,
     pub relight: Relight,
+    /// Shadows that fall on the layer, read from the scene's own shadows (sun through leaves).
+    pub dapple: Dapple,
+}
+
+/// "Shadows on me": the scene's shadow pattern is read from the layers below (where the ground is
+/// lit and where it is shadowed) and laid onto this layer through the cast-shadow projection: a
+/// point on the subject is lit exactly when the ground point its shadow would fall on is lit.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Dapple {
+    pub enabled: bool,
+    /// How dark the borrowed shadows are on the subject (1 = as dark as on the ground).
+    pub strength: Animated<f32>,
+    /// Extra blur of the borrowed pattern, canvas pixels (softer shadows on rounder surfaces).
+    pub softness: Animated<f32>,
+    /// Shift of the lit/shadow split (-1..1): positive treats more of the scene as shadow.
+    pub threshold: f32,
+    /// The subject's own cast shadow only darkens ground that was lit.
+    pub shadow_follows: bool,
+}
+
+impl Default for Dapple {
+    fn default() -> Self {
+        Self { enabled: false, strength: Animated::new(0.85), softness: Animated::new(2.0), threshold: 0.0, shadow_follows: true }
+    }
 }
 
 impl Default for LayerFx {
@@ -149,6 +174,7 @@ impl Default for LayerFx {
             posterize: 0.0,
             shadow: Shadow::default(),
             relight: Relight::default(),
+            dapple: Dapple::default(),
         }
     }
 }
@@ -172,6 +198,8 @@ impl LayerFx {
             .chain(s.softness.key_times())
             .chain(s.opacity.key_times())
             .chain(s.contact.key_times())
+            .chain(self.dapple.strength.key_times())
+            .chain(self.dapple.softness.key_times())
             .chain(r.azimuth.key_times())
             .chain(r.elevation.key_times())
             .chain(r.intensity.key_times())

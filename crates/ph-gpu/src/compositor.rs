@@ -52,6 +52,9 @@ pub struct LayerDraw {
     /// Key of an uploaded normal map (RGB = normal·0.5+0.5) for relighting.
     pub normals: Option<u64>,
     pub shadow: Option<ShadowDraw>,
+    /// Key of an uploaded canvas-sized light map (R: 1 = sunlit, 0 = in the scene's shadow),
+    /// used by the fx "Shadows on me" and by a cast shadow that follows the scene's light.
+    pub light: Option<u64>,
 }
 
 /// Effect parameters for one layer at one time, laid out for the GPU (see `FxParams` in WGSL).
@@ -76,6 +79,14 @@ pub struct FxSample {
     pub haze: [f32; 4],
     /// pixel block size (canvas px), posterize levels
     pub game: [f32; 4],
+    /// "Shadows on me": canvas → canvas cast-shadow projection rows (subject point → ground point)
+    pub dapple0: [f32; 4],
+    pub dapple1: [f32; 4],
+    pub dapple2: [f32; 4],
+    /// shade colour (shadow / lit ratio) rgb, strength
+    pub dapple3: [f32; 4],
+    /// softness (canvas px), enabled (0/1)
+    pub dapple4: [f32; 4],
 }
 
 /// A cast + contact shadow drawn onto the backdrop before the layer itself.
@@ -90,6 +101,8 @@ pub struct ShadowDraw {
     pub opacity: f32,
     pub contact_opacity: f32,
     pub color: [f32; 3],
+    /// Only darken where the light map says the ground is lit.
+    pub follow_light: bool,
 }
 
 #[repr(C)]
@@ -319,6 +332,7 @@ impl Compositor {
                 continue;
             }
             let mask_view = layer.mask.and_then(|k| self.sources.get(&k)).map(|m| &m.view);
+            let light_view = layer.light.and_then(|k| self.sources.get(&k)).map(|m| &m.view);
             let inv = layer.matrix.inverse();
             // Canvas pixels → source pixels (for effect radii given in canvas pixels).
             let px_scale = inv.matrix2.x_axis.length().max(1e-6);
@@ -335,7 +349,7 @@ impl Compositor {
                         sh.contact_opacity.clamp(0.0, 1.0) * layer.opacity.clamp(0.0, 1.0),
                         f32::from(u8::from(mask_view.is_some())),
                         f32::from(u8::from(layer.mask_invert)),
-                        0.0,
+                        f32::from(u8::from(sh.follow_light && light_view.is_some())),
                     ],
                 };
                 let sbuf = self.pipes.uniform(&self.device, bytemuck::bytes_of(&sp));
@@ -346,6 +360,7 @@ impl Compositor {
                     src: &src.view,
                     mask: mask_view.unwrap_or(&self.white_view),
                     normals: &self.white_view,
+                    light: light_view.unwrap_or(&self.white_view),
                 };
                 let bg = self.pipes.shadow_bind_group(&self.device, &views, &self.sampler, &sbuf);
                 let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("shadow"), timestamp_writes: None });
@@ -379,6 +394,9 @@ impl Compositor {
                 if normals_view.is_none() {
                     f.relight3[3] = 0.0;
                 }
+                if light_view.is_none() {
+                    f.dapple4[1] = 0.0;
+                }
                 self.pipes.uniform(&self.device, bytemuck::bytes_of(&f))
             });
             let ubuf = self.pipes.uniform(&self.device, bytemuck::bytes_of(&params));
@@ -389,6 +407,7 @@ impl Compositor {
                 src: &src.view,
                 mask: mask_view.unwrap_or(&self.white_view),
                 normals: normals_view.unwrap_or(&self.white_view),
+                light: light_view.unwrap_or(&self.white_view),
             };
             let bufs = CompositeBuffers {
                 params: &ubuf,

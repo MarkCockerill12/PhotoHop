@@ -8,6 +8,7 @@ mod analysis;
 mod app;
 mod blender;
 mod export;
+mod lightmap;
 mod matching;
 mod media_cache;
 mod paint;

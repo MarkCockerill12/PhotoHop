@@ -19,7 +19,7 @@ pub mod roto;
 pub use anim::{Animated, Interp};
 pub use blend::BlendMode;
 pub use doc::{Canvas, Layer, LayerContent, LayerId, LayerTransform, MediaId, MediaKind, MediaRef, Project};
-pub use fx::{LayerFx, Relight, Shadow};
+pub use fx::{Dapple, LayerFx, Relight, Shadow};
 pub use grade::{Curves, Grade, GradeSample, LayerMask, Qualifier};
 pub use history::History;
 pub use roto::{RotoMode, RotoPath, RotoPoint, RotoShape};

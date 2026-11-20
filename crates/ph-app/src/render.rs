@@ -118,7 +118,8 @@ fn fx_sample(fx: &ph_core::LayerFx, t: f64, fps: f64, has_normals: bool) -> Opti
         || fx.haze.at(t) > 0.0
         || fx.pixelate >= 1.5
         || fx.posterize >= 2.0
-        || r.enabled;
+        || r.enabled
+        || fx.dapple.enabled;
     if !active {
         return None;
     }
@@ -133,7 +134,40 @@ fn fx_sample(fx: &ph_core::LayerFx, t: f64, fps: f64, has_normals: bool) -> Opti
         scale: [0.0; 4],
         haze: [fx.haze_color[0], fx.haze_color[1], fx.haze_color[2], fx.haze.at(t)],
         game: [fx.pixelate, fx.posterize, 0.0, 0.0],
+        ..Default::default()
     })
+}
+
+thread_local! {
+    /// Shade colours of cached light maps (the maps themselves live on the GPU).
+    static LIGHT_SHADES: std::cell::RefCell<HashMap<u64, [f32; 3]>> = Default::default();
+}
+
+/// Light map of everything composited so far (the layers below `layer`), cached on the GPU.
+/// Returns the texture key and the scene's shadow/lit colour ratio.
+fn scene_light_map(gpu: &mut Compositor, doc: &Project, layer_idx: usize, below: &[LayerDraw], t: f64) -> Option<(u64, [f32; 3])> {
+    let threshold = doc.layers[layer_idx].fx.dapple.threshold;
+    let below_json = serde_json::to_string(&doc.layers[..layer_idx]).unwrap_or_default();
+    let sources: Vec<u64> = below.iter().map(|d| d.source).collect();
+    let key = hash_of(("light", doc.layers[layer_idx].id, below_json, sources, threshold.to_bits(), (t * doc.canvas.fps).round() as i64));
+    if gpu.has_source(key, 0)
+        && let Some(shade) = LIGHT_SHADES.with(|m| m.borrow().get(&key).copied())
+    {
+        return Some((key, shade));
+    }
+    gpu.render(doc.canvas.width, doc.canvas.height, [0.0; 4], below);
+    let (w, h, px) = gpu.read_back().ok()?;
+    let map = crate::lightmap::estimate(&Frame::new(w, h, px), threshold);
+    let rgba: Vec<f16> = map.lit.iter().flat_map(|v| [*v, *v, *v, 1.0].map(f16::from_f32)).collect();
+    gpu.upload(key, 0, map.width, map.height, &rgba);
+    LIGHT_SHADES.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() > 64 {
+            m.clear();
+        }
+        m.insert(key, map.shade);
+    });
+    Some((key, map.shade))
 }
 
 fn paint_key(id: LayerId) -> u64 {
@@ -153,7 +187,7 @@ pub fn composite(
 ) {
     let mut draws = Vec::new();
     let mut keep = HashSet::new();
-    for layer in doc.layers.iter().filter(|l| l.visible && l.active_at(t)) {
+    for (layer_idx, layer) in doc.layers.iter().enumerate().filter(|(_, l)| l.visible && l.active_at(t)) {
         let size = doc.layer_source_size(layer);
         let key = match &layer.content {
             LayerContent::Media { media, .. } => {
@@ -269,7 +303,28 @@ pub fn composite(
             _ => None,
         };
         let matrix = layer.transform.matrix(t, size);
-        let fx = fx_sample(&layer.fx, t, doc.canvas.fps, normals_key.is_some());
+        let mut fx = fx_sample(&layer.fx, t, doc.canvas.fps, normals_key.is_some());
+        // "Shadows on me": the scene's light map, read through the cast-shadow projection.
+        let dapple = &layer.fx.dapple;
+        let mut light = None;
+        if dapple.enabled
+            && !draws.is_empty()
+            && let Some((lkey, shade)) = scene_light_map(gpu, doc, layer_idx, &draws, t)
+            && let Some(f) = fx.as_mut()
+        {
+            keep.insert(lkey);
+            light = Some(lkey);
+            // Same projection as the cast shadow: a point h pixels above its foot lands
+            // h·length·(cos a, sin a) away on the ground.
+            let s = &layer.fx.shadow;
+            let (a, len) = (s.angle.at(t).to_radians(), s.length.at(t));
+            let ground_y = matrix.transform_point2(Vec2::new(size.x * 0.5, size.y * s.ground)).y;
+            let tall = matrix.transform_vector2(Vec2::new(0.0, size.y)).length();
+            f.dapple0 = [len * a.cos(), len * a.sin(), ground_y, 0.06 * tall];
+            f.dapple1 = [(tall / 512.0).max(1.0), 0.0, 0.0, 0.0];
+            f.dapple3 = [shade[0], shade[1], shade[2], dapple.strength.at(t)];
+            f.dapple4 = [dapple.softness.at(t).max(0.0), 1.0, 0.0, 0.0];
+        }
         let shadow = layer.fx.shadow.enabled.then(|| {
             let s = &layer.fx.shadow;
             ShadowDraw {
@@ -280,6 +335,7 @@ pub fn composite(
                 opacity: s.opacity.at(t),
                 contact_opacity: s.contact.at(t),
                 color: s.color,
+                follow_light: light.is_some() && dapple.shadow_follows,
             }
         });
         let graded = layer.grade.enabled && !layer.grade.is_identity();
@@ -299,6 +355,7 @@ pub fn composite(
             fx,
             normals: normals_key,
             shadow,
+            light,
         });
     }
     gpu.retain_sources(&keep);

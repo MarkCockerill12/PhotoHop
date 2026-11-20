@@ -166,6 +166,40 @@ pub fn integration_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
         }
 
         ui.separator();
+        let dp = &fx.dapple;
+        ui.horizontal(|ui| {
+            let mut on = dp.enabled;
+            let hint = "Shadows in the scene (sun through leaves, window frames, blinds) fall on you too: PhotoHop reads where the ground is sunlit and lays the same pattern on you along the cast-shadow direction.";
+            if ui.checkbox(&mut on, egui::RichText::new("Shadows on me").strong()).on_hover_text(hint).changed() {
+                let ground = if on && !s.enabled { app.find_ground(id) } else { None };
+                app.edit("Shadows on me", |d| {
+                    if let Some(l) = d.layer_mut(id) {
+                        l.fx.dapple.enabled = on;
+                        if let Some(g) = ground {
+                            l.fx.shadow.ground = g;
+                        }
+                    }
+                });
+            }
+        });
+        if dp.enabled {
+            ui.label(
+                egui::RichText::new("Follows the Cast shadow's direction and length: line your shadow up with the scene's shadows first (it can stay hidden at opacity 0).")
+                    .small()
+                    .weak(),
+            );
+            egui::Grid::new("dapple_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
+                anim_row(app, ui, id, "Strength", dp.strength.at(t), 0.0..=1.0, |l| &mut l.fx.dapple.strength);
+                anim_row(app, ui, id, "Softness", dp.softness.at(t), 0.0..=30.0, |l| &mut l.fx.dapple.softness);
+                plain_row(app, ui, id, "Lit / shadow split", dp.threshold, -1.0..=1.0, |l, v| l.fx.dapple.threshold = v);
+            });
+            let mut follow = dp.shadow_follows;
+            if ui.checkbox(&mut follow, "My shadow only darkens sunlit ground").changed() {
+                app.edit("Shadow follows light", |d| d.layer_mut(id).map_or((), |l| l.fx.dapple.shadow_follows = follow));
+            }
+        }
+
+        ui.separator();
         let r = &fx.relight;
         ui.horizontal(|ui| {
             let mut on = r.enabled;

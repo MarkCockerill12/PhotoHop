@@ -50,9 +50,45 @@ struct FxParams {
     scale: vec4<f32>,     // canvas px -> source px, enabled, 0, 0
     haze: vec4<f32>,      // haze colour rgb, amount
     game: vec4<f32>,      // pixel block (canvas px), posterize levels, 0, 0
+    dapple0: vec4<f32>,   // shadow offset per pixel of height (x, y), ground line y, ground tolerance (canvas px)
+    dapple1: vec4<f32>,   // foot search step (canvas px)
+    dapple2: vec4<f32>,
+    dapple3: vec4<f32>,   // shade rgb (shadow/lit ratio), strength
+    dapple4: vec4<f32>,   // softness (canvas px), enabled, 0, 0
 };
 @group(0) @binding(7) var<uniform> FX: FxParams;
 @group(0) @binding(8) var normal_tex: texture_2d<f32>;
+@group(0) @binding(9) var light_tex: texture_2d<f32>;
+
+// How lit the scene is where this subject point's shadow would land (1 = sun, 0 = shadow).
+// The point stands on the ground at the bottom of the silhouette in its own column (so a body
+// with depth, or legs apart, gets the right foot), unless that bottom is well above the ground
+// line (an outstretched arm), in which case it stands on the ground line.
+fn borrowed_light(pc: vec2<f32>, dimsf: vec2<f32>) -> f32 {
+    let ground = FX.dapple0.z;
+    let tol = FX.dapple0.w;
+    let limit = ground + tol;
+    // Fixed step on a shared grid: every row of a column tests the same sample points.
+    let stp = max(FX.dapple1.x, 1.0);
+    var y = (floor(pc.y / stp) + 1.0) * stp;
+    for (var i = 0u; i < 640u; i++) {
+        if (y >= limit) { y = limit; break; }
+        if (layer_alpha_at(vec2<f32>(pc.x, y)) < 0.5) { break; }
+        y = y + stp;
+    }
+    var foot = y;
+    if (foot < ground - tol) { foot = ground; }
+    let h = max(foot - pc.y, 0.0);
+    let g = vec2<f32>(pc.x, foot) + FX.dapple0.xy * h;
+    var lit = textureSampleLevel(light_tex, src_sampler, g / dimsf, 0.0).r;
+    if (FX.dapple4.x > 0.0) {
+        for (var i = 0u; i < 16u; i++) {
+            lit += textureSampleLevel(light_tex, src_sampler, (g + disk(i) * FX.dapple4.x) / dimsf, 0.0).r;
+        }
+        lit /= 17.0;
+    }
+    return clamp(lit, 0.0, 1.0);
+}
 
 const TAPS: u32 = 16u;
 
@@ -311,6 +347,11 @@ fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
             bg /= f32(TAPS);
             l = l + bg * (1.0 - ab) * FX.wrap.x;
         }
+        if (FX.dapple4.y > 0.5) {
+            let lit = borrowed_light(pc, vec2<f32>(dims));
+            let shade = mix(FX.dapple3.rgb, vec3<f32>(1.0), lit);
+            l = l * mix(vec3<f32>(1.0), shade, clamp(FX.dapple3.w, 0.0, 1.0));
+        }
         if (FX.haze.w > 0.0) {
             l = mix(l, FX.haze.rgb, clamp(FX.haze.w, 0.0, 1.0));
         }
@@ -366,7 +407,7 @@ struct ShadowParams {
     contact2: vec4<f32>,
     size: vec4<f32>,      // source w, h, cast softness (src px), contact softness (src px)
     color: vec4<f32>,     // tint rgb, cast opacity
-    extra: vec4<f32>,     // contact opacity, has mask, mask invert, 0
+    extra: vec4<f32>,     // contact opacity, has mask, mask invert, follow light map
 };
 @group(0) @binding(0) var sh_backdrop: texture_2d<f32>;
 @group(0) @binding(1) var sh_dst: texture_storage_2d<rgba16float, write>;
@@ -374,6 +415,7 @@ struct ShadowParams {
 @group(0) @binding(3) var sh_sampler: sampler;
 @group(0) @binding(4) var<uniform> SH: ShadowParams;
 @group(0) @binding(5) var sh_mask: texture_2d<f32>;
+@group(0) @binding(6) var sh_light: texture_2d<f32>;
 
 fn sh_alpha(s: vec2<f32>) -> f32 {
     if (s.x < 0.0 || s.y < 0.0 || s.x > SH.size.x || s.y > SH.size.y) { return 0.0; }
@@ -404,6 +446,10 @@ fn shadow(@builtin(global_invocation_id) gid: vec3<u32>) {
     var k = 0.0;
     if (SH.color.w > 0.0) { k = max(k, SH.color.w * sh_soft(p, SH.cast0, SH.cast1, SH.cast2, SH.size.z)); }
     if (SH.extra.x > 0.0) { k = max(k, SH.extra.x * sh_soft(p, SH.contact0, SH.contact1, SH.contact2, SH.size.w)); }
+    if (SH.extra.w > 0.5) {
+        // Ground already in the scene's shadow can't lose more sunlight.
+        k = k * textureSampleLevel(sh_light, sh_sampler, p / vec2<f32>(dims), 0.0).r;
+    }
     let tint = mix(vec3<f32>(1.0), SH.color.rgb, clamp(k, 0.0, 1.0));
     textureStore(sh_dst, px, vec4<f32>(back.rgb * tint, back.a));
 }
