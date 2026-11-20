@@ -247,6 +247,17 @@ impl App {
 
     pub fn save_to(&mut self, path: &Path) -> Result<()> {
         let path = path.with_extension(project_file::EXTENSION);
+        // Move AI results out of the temp folder into the project's assets so they survive.
+        let tmp = crate::ai::results_dir();
+        let assets = project_file::assets_dir(&path);
+        for m in &mut self.doc.media {
+            if m.path.starts_with(&tmp) {
+                std::fs::create_dir_all(&assets)?;
+                let dest = assets.join(m.path.file_name().context("media file name")?);
+                std::fs::copy(&m.path, &dest).context("copying AI result into project assets")?;
+                m.path = dest;
+            }
+        }
         project_file::save(&self.doc, &path)?;
         for (id, raster) in &self.paint {
             if self.doc.layer(*id).is_some() {
@@ -395,7 +406,7 @@ impl App {
         let (w, h) = (size.x.round().max(1.0) as u32, size.y.round().max(1.0) as u32);
         self.edit("Add mask", |d| {
             if let Some(l) = d.layer_mut(id) {
-                l.mask = Some(ph_core::LayerMask { enabled: true, invert: false, width: w, height: h });
+                l.mask = Some(ph_core::LayerMask { enabled: true, invert: false, width: w, height: h, video: None });
             }
         });
         self.masks.insert(id, PaintRaster::filled(w, h, [1.0; 4]));

@@ -25,7 +25,7 @@ fn normal_over_and_multiply() {
     let mut c = Compositor::new(&device, &queue);
     c.upload(1, 0, 4, 4, &solid(4, 4, [1.0, 0.0, 0.0, 0.5]));
     let full = Affine2::from_translation(Vec2::ZERO);
-    let draw = |blend| LayerDraw { source: 1, size: Vec2::new(4.0, 4.0), matrix: full, opacity: 1.0, blend, mask: None, mask_invert: false, grade: None, curves: None, fx: None, normals: None, shadow: None };
+    let draw = |blend| LayerDraw { source: 1, size: Vec2::new(4.0, 4.0), matrix: full, opacity: 1.0, blend, mask: None, mask_invert: false, mask_srgb: false, grade: None, curves: None, fx: None, normals: None, shadow: None };
 
     c.render(4, 4, [0.0, 0.0, 1.0, 1.0], &[draw(BlendMode::Normal)]);
     let (_, _, px) = c.read_back().unwrap();
@@ -63,6 +63,7 @@ fn grade_and_mask() {
         blend: BlendMode::Normal,
         mask: None,
         mask_invert: false,
+        mask_srgb: false,
         grade: None,
         curves: None,
         fx: None,
@@ -123,6 +124,7 @@ fn curves_and_qualifier() {
         blend: BlendMode::Normal,
         mask: None,
         mask_invert: false,
+        mask_srgb: false,
         curves: (!grade.curves.is_identity()).then(|| grade.curves.bake()),
         grade: Some(grade.sample(0.0)),
         fx: None,
@@ -172,6 +174,7 @@ fn shadow_and_light_wrap() {
         blend: BlendMode::Normal,
         mask: None,
         mask_invert: false,
+        mask_srgb: false,
         grade: None,
         curves: None,
         fx: None,

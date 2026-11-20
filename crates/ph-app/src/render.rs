@@ -18,6 +18,7 @@ pub enum DragMode {
     Rotate,
     Crop,
     Paint,
+    AiBox,
 }
 
 /// State captured when a viewer drag starts (values are absolute, so drags never drift).
@@ -36,6 +37,8 @@ pub struct Drag {
 pub struct Viewer {
     pub gpu: Compositor,
     pub drag: Option<Drag>,
+    /// AI region box being drawn (canvas pixels), see `AiState::picking_box`.
+    pub ai_box: Option<(Vec2, Vec2)>,
     /// Pending crop rectangle in canvas pixels (two corners).
     pub crop: Option<(Vec2, Vec2)>,
     pub tex_id: Option<egui::TextureId>,
@@ -54,6 +57,7 @@ impl Viewer {
         Self {
             gpu: Compositor::new(device, queue),
             drag: None,
+            ai_box: None,
             crop: None,
             tex_id: None,
             tex_gen: 0,
@@ -166,7 +170,22 @@ pub fn composite(
             }
         };
         keep.insert(key);
+        let mut mask_srgb = false;
         let mask = match (&layer.mask, masks.get(&layer.id)) {
+            (Some(m), _) if m.enabled && m.video.is_some() => {
+                let mv = m.video.and_then(|id| doc.media(id));
+                match mv.and_then(|mref| fetch(mref, layer.media_time(t))) {
+                    Some((mkey, frame)) => {
+                        if !gpu.has_source(mkey, 0) {
+                            gpu.upload(mkey, 0, frame.width, frame.height, &frame.pixels);
+                        }
+                        keep.insert(mkey);
+                        mask_srgb = true;
+                        Some(mkey)
+                    }
+                    None => None,
+                }
+            }
             (Some(m), Some(r)) if m.enabled => {
                 let mkey = hash_of(("mask", layer.id));
                 if !gpu.has_source(mkey, r.revision) {
@@ -215,6 +234,7 @@ pub fn composite(
             blend: layer.blend,
             mask,
             mask_invert: layer.mask.as_ref().is_some_and(|m| m.invert),
+            mask_srgb,
             grade,
             curves,
             fx,

@@ -85,11 +85,7 @@ fn layer_alpha_at(p: vec2<f32>) -> f32 {
     if (!inside(s)) { return 0.0; }
     let uv = s / P.src_size;
     var a = textureSampleLevel(src_tex, src_sampler, uv, 0.0).a;
-    if (P.has_mask != 0u) {
-        var m = textureSampleLevel(mask_tex, src_sampler, uv, 0.0).r;
-        if (P.mask_invert != 0u) { m = 1.0 - m; }
-        a = a * clamp(m, 0.0, 1.0);
-    }
+    if (P.has_mask != 0u) { a = a * mask_value(uv); }
     return a;
 }
 
@@ -244,6 +240,14 @@ fn grade(lin: vec3<f32>) -> vec3<f32> {
     return from_perceptual(max(p, vec3<f32>(0.0)));
 }
 
+/// Mask coverage at a source uv. Flags: bit 0 = invert, bit 1 = mask decoded from a video (sRGB).
+fn mask_value(uv: vec2<f32>) -> f32 {
+    var m = textureSampleLevel(mask_tex, src_sampler, uv, 0.0).r;
+    if ((P.mask_invert & 2u) != 0u) { m = to_perceptual(vec3<f32>(m)).x; }
+    if ((P.mask_invert & 1u) != 0u) { m = 1.0 - m; }
+    return clamp(m, 0.0, 1.0);
+}
+
 fn sample_layer(p: vec2<f32>) -> vec4<f32> {
     let s = P.inv0.xy * p.x + P.inv1.xy * p.y + P.inv2.xy;
     if (s.x < 0.0 || s.y < 0.0 || s.x > P.src_size.x || s.y > P.src_size.y) {
@@ -264,11 +268,7 @@ fn sample_layer(p: vec2<f32>) -> vec4<f32> {
         }
         c = max(c + FX.wrap.w * (c - acc / 8.0), vec4<f32>(0.0));
     }
-    if (P.has_mask != 0u) {
-        var m = textureSampleLevel(mask_tex, src_sampler, uv, 0.0).r;
-        if (P.mask_invert != 0u) { m = 1.0 - m; }
-        c = c * clamp(m, 0.0, 1.0);
-    }
+    if (P.has_mask != 0u) { c = c * mask_value(uv); }
     return c;
 }
 

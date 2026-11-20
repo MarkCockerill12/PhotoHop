@@ -16,6 +16,12 @@ Then point PhotoHop at the environment's Python (AI ▸ Settings, or `PHOTOHOP_A
 |---|---|---|
 | `matte IN OUT` | BiRefNet_HR (MIT) | automatic cutout of the main subject |
 | `normals IN OUT` | Sapiens2 normal 1B (Sapiens2 licence) | normal map of people, used by Relight |
+| `video-matte IN.mp4 OUT.mp4` | BiRefNet + MatAnyone 2 (S-Lab, non-commercial) | cut a person out of a whole clip |
+| `track IN.mp4 OUT.mp4 --box x0,y0,x1,y1` | SAM 2.1 large (Apache-2.0) | follow a region (e.g. a window) through a clip |
 | `segment IN OUT --prompt "person"` | SAM 3 (Meta SAM licence, gated: accept on Hugging Face and run `hf auth login`) | any text prompt, e.g. "toy gun" |
+
+Video commands need two extra packages (install without dependencies to avoid build tools):
+`uv pip install --no-deps git+https://github.com/facebookresearch/sam2.git git+https://github.com/pq-yang/MatAnyone2.git`
+plus FFmpeg on `PATH`. Run them on a GPU — a 17 s 4K phone clip takes ~1–2 minutes on an RTX 4070.
 
 Models download automatically on first use into the Hugging Face cache (`HF_HOME` to move it).

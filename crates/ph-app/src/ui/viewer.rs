@@ -176,6 +176,10 @@ fn start_drag(app: &mut App, p: egui::Pos2) -> Option<Drag> {
             rotation: l.map_or(0.0, |l| l.transform.rotation.at(app.time)),
         }
     };
+    if app.ai.picking_box {
+        app.viewer.ai_box = Some((start, start));
+        return Some(base(DragMode::AiBox, app.selected));
+    }
     match app.tool {
         Tool::Hand => None,
         Tool::Crop => {
@@ -228,6 +232,11 @@ fn update_drag(app: &mut App, d: Drag, screen: Vec2, shift: bool) {
         DragMode::Crop => {
             if let Some((a, _)) = app.viewer.crop {
                 app.viewer.crop = Some((a, cur));
+            }
+        }
+        DragMode::AiBox => {
+            if let Some((a, _)) = app.viewer.ai_box {
+                app.viewer.ai_box = Some((a, cur));
             }
         }
         DragMode::Move => {
@@ -301,6 +310,21 @@ fn finish_drag(app: &mut App) {
             }
         }
         DragMode::Crop => {}
+        DragMode::AiBox => {
+            app.ai.picking_box = false;
+            if let (Some((a, b)), Some(id)) = (app.viewer.ai_box.take(), d.layer)
+                && let Some(layer) = app.doc.layer(id)
+            {
+                let inv = app.doc.layer_matrix(layer, app.time).inverse();
+                let (p, q) = (inv.transform_point2(a), inv.transform_point2(b));
+                let (lo, hi) = (p.min(q), p.max(q));
+                if (hi - lo).min_element() < 4.0 {
+                    app.status = "Box too small — drag a rectangle around the region to track.".into();
+                } else if let Err(e) = app.start_ai(crate::ai::AiTask::TrackBox([lo.x, lo.y, hi.x, hi.y])) {
+                    app.status = format!("AI: {e:#}");
+                }
+            }
+        }
         _ => app.end_gesture(),
     }
 }
@@ -333,6 +357,10 @@ fn draw_overlays(app: &App, painter: &egui::Painter, resp: &egui::Response) {
         let rh = rotate_handle(&c);
         painter.line_segment([top_mid, rh], egui::Stroke::new(1.0, accent));
         painter.circle(rh, HANDLE_R, egui::Color32::WHITE, egui::Stroke::new(1.0, accent));
+    }
+    if let Some((a, b)) = app.viewer.ai_box {
+        let r = egui::Rect::from_two_pos(app.viewer.canvas_to_screen(a), app.viewer.canvas_to_screen(b));
+        painter.rect_stroke(r, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 196, 64)), egui::StrokeKind::Middle);
     }
     if let Some((a, b)) = app.viewer.crop {
         let r = egui::Rect::from_two_pos(app.viewer.canvas_to_screen(a), app.viewer.canvas_to_screen(b));

@@ -132,6 +132,9 @@ pub struct LayerMask {
     pub invert: bool,
     pub width: u32,
     pub height: u32,
+    /// Per-frame mask from a greyscale video (AI tracking/matting); overrides the painted raster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<crate::doc::MediaId>,
 }
 
 /// Tone curves in perceptual space: per-channel then master. Points are `[x, y]` in 0..1, sorted by x.

@@ -42,6 +42,8 @@ pub struct LayerDraw {
     /// Key of an uploaded mask source (red channel = coverage), if any.
     pub mask: Option<u64>,
     pub mask_invert: bool,
+    /// The mask came from a decoded video (sRGB-encoded greys) rather than a linear raster.
+    pub mask_srgb: bool,
     pub grade: Option<ph_core::GradeSample>,
     /// Baked curve LUT (`[r, g, b, master]` × 256), when the layer has curves.
     pub curves: Option<Vec<[f32; 4]>>,
@@ -358,7 +360,7 @@ impl Compositor {
                 blend: layer.blend.shader_id(),
                 perceptual: u32::from(layer.blend.space() == ph_core::blend::BlendSpace::Perceptual),
                 has_mask: u32::from(mask_view.is_some()),
-                mask_invert: u32::from(layer.mask_invert),
+                mask_invert: u32::from(layer.mask_invert) | (u32::from(layer.mask_srgb) << 1),
                 has_grade: u32::from(layer.grade.is_some()),
                 grade: layer.grade.map_or([[0.0; 4]; 11], |g| {
                     [g.basic, g.lift, g.gamma, g.gain, g.offset, g.tone, g.match_scale, g.match_offset, g.qual0, g.qual1, g.qual2]

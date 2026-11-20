@@ -105,6 +105,16 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
                 app.ai.show_dialog = true;
             }
             ui.separator();
+            if ui.add_enabled(!busy, egui::Button::new("Video: cut out subject (whole clip)")).clicked()
+                && let Err(e) = app.start_ai(crate::ai::AiTask::VideoCutout)
+            {
+                app.status = format!("AI: {e:#}");
+            }
+            if ui.add_enabled(!busy, egui::Button::new("Video: track a region… (draw a box)")).clicked() {
+                app.ai.picking_box = true;
+                app.status = "Drag a box around the region to track (e.g. the window glass) on the selected video layer.".into();
+            }
+            ui.separator();
             if ui.button("Settings…").clicked() {
                 app.ai.show_dialog = true;
             }

@@ -11,6 +11,7 @@ mod media_cache;
 mod paint;
 mod render;
 mod scopes;
+mod track;
 mod ui;
 
 use app::App;

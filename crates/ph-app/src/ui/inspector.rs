@@ -188,6 +188,26 @@ pub fn inspector(app: &mut App, ui: &mut egui::Ui) {
             ui.end_row();
         }
     });
+    let tracked: Vec<(LayerId, String)> = app
+        .doc
+        .layers
+        .iter()
+        .filter(|l| l.id != id && l.mask.as_ref().is_some_and(|m| m.video.is_some()))
+        .map(|l| (l.id, l.name.clone()))
+        .collect();
+    if !tracked.is_empty() {
+        ui.horizontal(|ui| {
+            ui.label("Follow tracked region of");
+            for (tid, name) in tracked {
+                if ui.button(&name).on_hover_text("Keyframe this layer to move with that layer's tracked mask").clicked() {
+                    app.status = match app.follow_track(id, tid) {
+                        Ok(n) => format!("Following \"{name}\": {n} keyframes set."),
+                        Err(e) => format!("Follow failed: {e:#}"),
+                    };
+                }
+            }
+        });
+    }
     if ui.button("Reset transform").clicked() {
         app.edit("Reset transform", |d| {
             let canvas = d.canvas.clone();

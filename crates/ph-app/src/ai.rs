@@ -18,6 +18,10 @@ pub enum AiTask {
     Segment(String),
     /// Surface normals for relighting (Sapiens2).
     Normals,
+    /// Track the region inside a box (source pixels `[x0, y0, x1, y1]`) through a video (SAM 2.1).
+    TrackBox([f32; 4]),
+    /// Cut the main subject out of a whole video (BiRefNet + MatAnyone 2).
+    VideoCutout,
 }
 
 impl AiTask {
@@ -26,7 +30,13 @@ impl AiTask {
             Self::Matte => "AI cutout".into(),
             Self::Segment(p) => format!("AI mask \"{p}\""),
             Self::Normals => "AI normals".into(),
+            Self::TrackBox(_) => "AI region track".into(),
+            Self::VideoCutout => "AI video cutout".into(),
         }
+    }
+
+    fn is_video(&self) -> bool {
+        matches!(self, Self::TrackBox(_) | Self::VideoCutout)
     }
 }
 
@@ -37,33 +47,48 @@ pub struct AiJob {
     rx: Receiver<Result<serde_json::Value, String>>,
 }
 
+/// Where AI results live until the project is saved (then they are copied into its assets).
+pub fn results_dir() -> PathBuf {
+    std::env::temp_dir().join("photohop-ai")
+}
+
 pub struct AiState {
     /// Python interpreter of the environment where `photohop-ai` is installed.
     pub python: String,
     pub prompt: String,
     pub show_dialog: bool,
     pub job: Option<AiJob>,
+    /// Next viewer drag draws a box for region tracking.
+    pub picking_box: bool,
 }
 
 impl Default for AiState {
     fn default() -> Self {
         let python = std::env::var("PHOTOHOP_AI_PYTHON")
             .unwrap_or_else(|_| if cfg!(windows) { "python".into() } else { "python3".into() });
-        Self { python, prompt: "person".into(), show_dialog: false, job: None }
+        Self { python, prompt: "person".into(), show_dialog: false, job: None, picking_box: false }
     }
 }
 
 fn temp_dir() -> Result<PathBuf> {
-    let d = std::env::temp_dir().join("photohop-ai");
+    let d = results_dir();
     std::fs::create_dir_all(&d)?;
     Ok(d)
 }
 
 /// Run the sidecar and parse its single JSON result line.
-fn run_sidecar(python: &str, args: &[String]) -> Result<serde_json::Value, String> {
-    let out = ph_media::process::command(python)
-        .args(["-m", "photohop_ai.cli"])
-        .args(args)
+fn run_sidecar(python: &str, args: &[String], exe_dir: Option<&Path>) -> Result<serde_json::Value, String> {
+    let mut cmd = ph_media::process::command(python);
+    cmd.args(["-m", "photohop_ai.cli"]).args(args);
+    // Let the helper find the FFmpeg bundled next to PhotoHop.
+    if let Some(dir) = exe_dir {
+        let mut paths = vec![dir.to_path_buf()];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+        if let Ok(joined) = std::env::join_paths(paths) {
+            cmd.env("PATH", joined);
+        }
+    }
+    let out = cmd
         .output()
         .map_err(|e| format!("could not start {python}: {e}. Set the AI Python in AI > Settings."))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -101,6 +126,14 @@ impl App {
         let layer = self.doc.layer(id).context("layer missing")?;
         let dir = temp_dir()?;
         let input = match &layer.content {
+            LayerContent::Media { media, .. } if task.is_video() => {
+                let m = self.doc.media(*media).context("media missing")?;
+                if !m.is_video() {
+                    bail!("this needs a video layer");
+                }
+                m.path.clone()
+            }
+            _ if task.is_video() => bail!("this needs a video layer"),
             LayerContent::Media { media, .. } => {
                 let m = self.doc.media(*media).context("media missing")?;
                 if m.is_video() {
@@ -121,7 +154,12 @@ impl App {
             }
             LayerContent::Solid { .. } => bail!("AI masks need a photo, video or paint layer"),
         };
-        let output = dir.join(format!("{}-{}.png", if task == AiTask::Normals { "normals" } else { "mask" }, id.0));
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+        let output = match &task {
+            AiTask::Normals => dir.join(format!("normals-{}.png", id.0)),
+            t if t.is_video() => dir.join(format!("maskvideo-{}-{stamp}.mp4", id.0)),
+            _ => dir.join(format!("mask-{}.png", id.0)),
+        };
         let mut args = vec![String::new(), input.to_string_lossy().into_owned(), output.to_string_lossy().into_owned()];
         match &task {
             AiTask::Matte => args[0] = "matte".into(),
@@ -130,12 +168,18 @@ impl App {
                 args.extend(["--prompt".into(), prompt.clone()]);
             }
             AiTask::Normals => args[0] = "normals".into(),
+            AiTask::TrackBox(b) => {
+                args[0] = "track".into();
+                args.extend(["--box".into(), format!("{},{},{},{}", b[0], b[1], b[2], b[3])]);
+            }
+            AiTask::VideoCutout => args[0] = "video-matte".into(),
         }
         let (tx, rx) = unbounded();
         let python = self.ai.python.clone();
+        let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
         let ctx = self.egui_ctx.clone();
         std::thread::Builder::new().name("photohop-ai".into()).spawn(move || {
-            let _ = tx.send(run_sidecar(&python, &args));
+            let _ = tx.send(run_sidecar(&python, &args, exe_dir.as_deref()));
             ctx.request_repaint();
         })?;
         self.status = format!("{} running… (first run downloads the model)", task.label());
@@ -150,6 +194,29 @@ impl App {
         let job = self.ai.job.take().expect("job");
         let applied: Result<String> = (|| {
             let v = result.map_err(|e| anyhow::anyhow!(e))?;
+            if job.task.is_video() {
+                let info = ph_media::video::probe(&job.output)?;
+                let media = ph_core::MediaRef {
+                    id: ph_core::MediaId::new(),
+                    path: job.output.clone(),
+                    kind: ph_core::MediaKind::Video { duration: info.duration, fps: info.fps, has_audio: false },
+                    width: info.width,
+                    height: info.height,
+                };
+                let (mid, id) = (media.id, job.layer);
+                let (w, h) = (info.width, info.height);
+                self.edit(&job.task.label(), |d| {
+                    d.media.push(media);
+                    if let Some(l) = d.layer_mut(id) {
+                        l.mask = Some(ph_core::LayerMask { enabled: true, invert: false, width: w, height: h, video: Some(mid) });
+                    }
+                });
+                return Ok(format!(
+                    "{} done in {:.0}s — applied as the layer's mask (tick Invert in the Mask section to cut the region out).",
+                    job.task.label(),
+                    v["seconds"].as_f64().unwrap_or(0.0)
+                ));
+            }
             if job.task == AiTask::Normals {
                 let raster = PaintRaster::load(&job.output)?;
                 let id = job.layer;
@@ -167,7 +234,7 @@ impl App {
             let id = job.layer;
             self.edit(&job.task.label(), |d| {
                 if let Some(l) = d.layer_mut(id) {
-                    l.mask = Some(ph_core::LayerMask { enabled: true, invert: false, width: w, height: h });
+                    l.mask = Some(ph_core::LayerMask { enabled: true, invert: false, width: w, height: h, video: None });
                 }
             });
             self.masks.insert(id, raster);
@@ -204,7 +271,7 @@ mod tests {
 
     #[test]
     fn missing_python_reports_error() {
-        let e = run_sidecar("definitely-not-a-python-binary", &["info".into()]).unwrap_err();
+        let e = run_sidecar("definitely-not-a-python-binary", &["info".into()], None).unwrap_err();
         assert!(e.contains("could not start"), "{e}");
     }
 }
