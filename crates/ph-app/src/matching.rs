@@ -7,6 +7,8 @@ use ph_media::color::linear_to_srgb;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MatchMode {
+    /// Colour cast + tone from the background immediately around the layer (most natural).
+    Surroundings,
     /// Per-channel mean and spread (Reinhard-style transfer).
     Full,
     /// Only the colour balance (mean hue shift), brightness untouched.
@@ -16,10 +18,11 @@ pub enum MatchMode {
 }
 
 impl MatchMode {
-    pub const ALL: [MatchMode; 3] = [Self::ColourCast, Self::Tone, Self::Full];
+    pub const ALL: [MatchMode; 4] = [Self::Surroundings, Self::ColourCast, Self::Tone, Self::Full];
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Surroundings => "Surroundings (recommended)",
             Self::Full => "Full (colour + brightness + contrast)",
             Self::ColourCast => "Colour cast only",
             Self::Tone => "Brightness & contrast only",
@@ -32,6 +35,9 @@ pub struct Stats {
     pub mean: [f32; 3],
     pub std: [f32; 3],
     pub weight: f32,
+    /// Luma at the 2nd and 98th percentiles (black and white points).
+    pub black: f32,
+    pub white: f32,
 }
 
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
@@ -46,6 +52,7 @@ pub fn stats(frame: &Frame, mask: Option<&dyn Fn(f32, f32) -> f32>) -> Stats {
     let (w, h) = (frame.width as usize, frame.height as usize);
     let step = (((w * h) as f32 / 250_000.0).sqrt().ceil() as usize).max(1);
     let (mut sum, mut sq, mut wsum) = ([0f64; 3], [0f64; 3], 0f64);
+    let mut hist = [0f64; 256];
     for y in (0..h).step_by(step) {
         for x in (0..w).step_by(step) {
             let i = (y * w + x) * 4;
@@ -58,11 +65,15 @@ pub fn stats(frame: &Frame, mask: Option<&dyn Fn(f32, f32) -> f32>) -> Stats {
             if wt <= 0.01 {
                 continue;
             }
+            let mut px = [0f64; 3];
             for c in 0..3 {
                 let v = linear_to_srgb((frame.pixels[i + c].to_f32() / a).max(0.0)) as f64;
                 sum[c] += v * wt;
                 sq[c] += v * v * wt;
+                px[c] = v;
             }
+            let y = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
+            hist[((y * 255.0).round() as usize).min(255)] += wt;
             wsum += wt;
         }
     }
@@ -71,7 +82,17 @@ pub fn stats(frame: &Frame, mask: Option<&dyn Fn(f32, f32) -> f32>) -> Stats {
     }
     let mean = sum.map(|s| (s / wsum) as f32);
     let std = std::array::from_fn(|c| ((sq[c] / wsum) as f32 - mean[c] * mean[c]).max(0.0).sqrt());
-    Stats { mean, std, weight: wsum as f32 }
+    let pct = |p: f64| -> f32 {
+        let mut acc = 0.0;
+        for (i, h) in hist.iter().enumerate() {
+            acc += h;
+            if acc >= p * wsum {
+                return i as f32 / 255.0;
+            }
+        }
+        1.0
+    };
+    Stats { mean, std, weight: wsum as f32, black: pct(0.02), white: pct(0.98) }
 }
 
 /// Grade match parameters `(scale, offset)` that move `src` statistics towards `target`.
@@ -86,6 +107,17 @@ pub fn transfer(src: &Stats, target: &Stats, mode: MatchMode) -> ([f32; 3], [f32
             }
             (scale, offset)
         }
+        MatchMode::Surroundings => {
+            // Colourist-style: match the black point to the scene while keeping the subject's own
+            // highlights (subjects are often darker or brighter than their surroundings by nature),
+            // plus 60 % of the colour cast difference.
+            let (sb, sw, tb) = (src.black, src.white.max(src.black + 0.05), target.black);
+            let k = ((sw - tb) / (sw - sb)).clamp(0.7, 1.1);
+            let off = tb - sb * k;
+            let d: [f32; 3] = std::array::from_fn(|c| target.mean[c] - src.mean[c]);
+            let dy = luma(d);
+            ([k; 3], std::array::from_fn(|c| off + 0.6 * (d[c] - dy)))
+        }
         MatchMode::ColourCast => {
             let d: [f32; 3] = std::array::from_fn(|c| target.mean[c] - src.mean[c]);
             let dy = luma(d);
@@ -98,6 +130,38 @@ pub fn transfer(src: &Stats, target: &Stats, mode: MatchMode) -> ([f32; 3], [f32
             ([k; 3], [mt - ms * k; 3])
         }
     }
+}
+
+/// Statistics of the subject (opaque pixels of `subject`) and of the background in a band around
+/// it (inside the subject's bounding box grown by 50 %, where the subject is absent). Both frames
+/// are canvas-sized composites.
+pub fn surround_stats(background: &Frame, subject: &Frame) -> Option<(Stats, Stats)> {
+    let (w, h) = (subject.width as usize, subject.height as usize);
+    let alpha = |x: usize, y: usize| subject.pixels[(y * w + x) * 4 + 3].to_f32();
+    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0usize, 0usize);
+    for y in (0..h).step_by(2) {
+        for x in (0..w).step_by(2) {
+            if alpha(x, y) > 0.5 {
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+            }
+        }
+    }
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let (gx, gy) = ((x1 - x0) / 2, (y1 - y0) / 2);
+    let (bx0, by0, bx1, by1) = (x0.saturating_sub(gx), y0.saturating_sub(gy), (x1 + gx).min(w - 1), (y1 + gy).min(h - 1));
+    let ring = |u: f32, v: f32| -> f32 {
+        let (x, y) = (((u * w as f32) as usize).min(w - 1), ((v * h as f32) as usize).min(h - 1));
+        if x < bx0 || x > bx1 || y < by0 || y > by1 || alpha(x, y) > 0.05 { 0.0 } else { 1.0 }
+    };
+    let solid = |u: f32, v: f32| -> f32 {
+        let (x, y) = (((u * w as f32) as usize).min(w - 1), ((v * h as f32) as usize).min(h - 1));
+        if alpha(x, y) > 0.9 { 1.0 } else { 0.0 }
+    };
+    let s = stats(subject, Some(&solid));
+    let t = stats(background, Some(&ring));
+    (s.weight > 0.0 && t.weight > 0.0).then_some((s, t))
 }
 
 #[cfg(test)]

@@ -21,8 +21,8 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
 - Crop, paint layers with a soft brush and eraser (pressure-free for now), colour layers
 - Per-layer colour grade: exposure, temperature/tint, lift/gamma/gain colour wheels, contrast/pivot,
   saturation — all keyframable
-- **Match colour** to another layer without AI (colour cast only, brightness & contrast only, or full
-  statistical transfer), with an amount slider
+- **Match colour** without AI — *Surroundings* (default) matches your black level and colour cast to the
+  scene right around you, like a colourist would; also colour cast only, tone only, or full transfer
 - Layer masks: paint to hide (brush) or reveal (eraser), invert, toggle
 - Selections straight into masks (M): rectangle, ellipse, lasso, magic wand; Shift adds, Alt subtracts, feather
 - Scopes (S): waveform, RGB parade, vectorscope with skin-tone line, histogram

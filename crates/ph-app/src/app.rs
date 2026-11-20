@@ -126,7 +126,7 @@ impl App {
             masks: HashMap::new(),
             normals: HashMap::new(),
             edit_mask: false,
-            match_mode: crate::matching::MatchMode::ColourCast,
+            match_mode: crate::matching::MatchMode::Surroundings,
             match_reference: None,
             curve_channel: Default::default(),
             select_shape: Default::default(),
@@ -574,10 +574,51 @@ impl App {
         ))
     }
 
+    /// Canvas-sized composite of only the layers chosen by `keep` (no grade on `ungraded`).
+    fn composite_only(&mut self, keep: impl Fn(LayerId) -> bool, ungraded: Option<LayerId>) -> Result<ph_media::Frame> {
+        let mut doc = self.doc.clone();
+        for l in &mut doc.layers {
+            l.visible = l.visible && keep(l.id);
+            if Some(l.id) == ungraded {
+                l.grade = ph_core::Grade::default();
+                l.fx = ph_core::LayerFx::default();
+            }
+        }
+        doc.canvas.background = [0.0; 4];
+        let t = self.time;
+        let media = &mut self.media;
+        crate::render::composite(&mut self.viewer.gpu, &doc, t, &self.paint, &self.masks, &self.normals, |m, mt| media.frame(m, mt));
+        let (w, h, px) = self.viewer.gpu.read_back()?;
+        Ok(ph_media::Frame::new(w, h, px))
+    }
+
     /// Match the selected layer's colours to a reference layer (default: the layer below it).
     pub fn match_colour(&mut self) -> Result<()> {
-        use crate::matching::{stats, transfer};
+        use crate::matching::{MatchMode, stats, surround_stats, transfer};
         let id = self.selected.context("select the layer to adjust")?;
+        if self.match_mode == MatchMode::Surroundings {
+            let idx = self.doc.layer_index(id).context("layer missing")?;
+            let below: Vec<LayerId> = self.doc.layers[..idx].iter().map(|l| l.id).collect();
+            if below.is_empty() {
+                anyhow::bail!("add a background layer below this one first");
+            }
+            let bg = self.composite_only(|l| below.contains(&l), None)?;
+            let subj = self.composite_only(|l| l == id, Some(id))?;
+            let (s, t) = surround_stats(&bg, &subj).context("nothing visible to measure")?;
+            let (scale, offset) = transfer(&s, &t, MatchMode::Surroundings);
+            let (time, auto) = (self.time, self.auto_key);
+            self.edit("Match colour", |d| {
+                if let Some(l) = d.layer_mut(id) {
+                    l.grade.match_scale = scale;
+                    l.grade.match_offset = offset;
+                    if l.grade.match_amount.at(time) <= 0.0 {
+                        l.grade.match_amount.set(time, 1.0, auto);
+                    }
+                }
+            });
+            self.status = "Matched colour to the surroundings. Use the Match amount slider to blend.".into();
+            return Ok(());
+        }
         let idx = self.doc.layer_index(id).context("layer missing")?;
         let reference = self
             .match_reference

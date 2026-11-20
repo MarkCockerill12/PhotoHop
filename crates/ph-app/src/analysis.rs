@@ -220,5 +220,11 @@ mod real_project {
         app.selected = app.doc.layers.last().map(|l| l.id);
         eprintln!("{}", app.match_detail().unwrap());
         eprintln!("{}", app.match_light().unwrap());
+        app.match_colour().unwrap();
+        let g = &app.doc.layers.last().unwrap().grade;
+        eprintln!("surroundings match: scale {:?} offset {:?}", g.match_scale, g.match_offset);
+        if let Some(out) = std::env::var_os("PHOTOHOP_TEST_SAVE") {
+            app.save_to(std::path::Path::new(&out)).unwrap();
+        }
     }
 }
