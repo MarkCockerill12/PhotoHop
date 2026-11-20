@@ -2016,7 +2016,7 @@ dependencies = [
 
 [[package]]
 name = "ph-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "glam",
@@ -2027,7 +2027,7 @@ dependencies = [
 
 [[package]]
 name = "ph-gpu"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2041,7 +2041,7 @@ dependencies = [
 
 [[package]]
 name = "ph-media"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "half",
@@ -2051,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "photohop"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
