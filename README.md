@@ -28,6 +28,8 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
 - **Integration**: light wrap, blur/sharpen, film grain, cast + contact shadow (auto-detects the feet),
   and **relighting** from AI-estimated normals with a drag-the-sun light pad, rim light and soft
   skin falloff — shading changes only, never repainted pixels
+- **One-click matching without AI**: match grain & sharpness, match light (colour, ambient, direction)
+  to the background; atmospheric haze; optional **game-ify** (pixelate / posterize)
 - **Video masks** (AI): cut yourself out of a whole clip, or draw a box to track a region (e.g. a
   window) and replace what's behind it; **Follow tracked region** keyframes another layer to move with it
 - **Blender round trip**: File > Export to Blender writes a bundle; the PhotoHop Bridge add-on
@@ -86,10 +88,10 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
 2. **Masks & cutouts** — mask painting *(done)*; selections, bezier roto, AI cutout suggestions you can refine
 3. **Colour** — wheels, grade, non-AI matching, curves, HSL qualifier, scopes *(done)*; colour management (OCIO/Log/RAW)
 4. **Integration** — relighting, cast/contact shadows, light wrap, grain, blur/sharpen *(done)*;
-   automatic grain/sharpness matching, haze and bloom
+   automatic grain/sharpness and light matching, haze *(done)*; bloom
 5. **Tracking** — AI region tracking + match-move *(done)*; point/planar trackers, stabiliser, 3D camera solve
 6. **Blender round-trip** — bundle export, add-on, render import *(done)*; camera solve and body motion export
-7. **AI auto-colour** and an optional "game-ify" look
+7. **AI auto-colour** and an optional "game-ify" look *(game-ify done)*
 
 ## AI (optional)
 

@@ -123,6 +123,12 @@ pub struct LayerFx {
     pub grain: Animated<f32>,
     pub grain_size: f32,
     pub grain_mono: bool,
+    /// Atmospheric haze: blend towards `haze_color` (linear RGB).
+    pub haze: Animated<f32>,
+    pub haze_color: [f32; 3],
+    /// "Game-ify": pixel block size in canvas pixels (0 = off) and posterize levels (0 = off).
+    pub pixelate: f32,
+    pub posterize: f32,
     pub shadow: Shadow,
     pub relight: Relight,
 }
@@ -137,6 +143,10 @@ impl Default for LayerFx {
             grain: Animated::new(0.0),
             grain_size: 1.5,
             grain_mono: false,
+            haze: Animated::new(0.0),
+            haze_color: [0.7, 0.75, 0.85],
+            pixelate: 0.0,
+            posterize: 0.0,
             shadow: Shadow::default(),
             relight: Relight::default(),
         }
@@ -156,6 +166,7 @@ impl LayerFx {
             .chain(self.blur.key_times())
             .chain(self.sharpen.key_times())
             .chain(self.grain.key_times())
+            .chain(self.haze.key_times())
             .chain(s.angle.key_times())
             .chain(s.length.key_times())
             .chain(s.softness.key_times())

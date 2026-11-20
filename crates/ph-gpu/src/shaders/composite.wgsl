@@ -48,6 +48,8 @@ struct FxParams {
     relight2: vec4<f32>,  // ambient, rim, wrap (sss), amount
     relight3: vec4<f32>,  // rim colour rgb, has normals
     scale: vec4<f32>,     // canvas px -> source px, enabled, 0, 0
+    haze: vec4<f32>,      // haze colour rgb, amount
+    game: vec4<f32>,      // pixel block (canvas px), posterize levels, 0, 0
 };
 @group(0) @binding(7) var<uniform> FX: FxParams;
 @group(0) @binding(8) var normal_tex: texture_2d<f32>;
@@ -278,7 +280,11 @@ fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= dims.x || gid.y >= dims.y) { return; }
     let px = vec2<i32>(gid.xy);
     let back = textureLoad(backdrop, px, 0);
-    let lay = sample_layer(vec2<f32>(gid.xy) + vec2<f32>(0.5));
+    var pc0 = vec2<f32>(gid.xy) + vec2<f32>(0.5);
+    if (FX.scale.y > 0.5 && FX.game.x >= 1.5) {
+        pc0 = (floor(pc0 / FX.game.x) + vec2<f32>(0.5)) * FX.game.x;
+    }
+    let lay = sample_layer(pc0);
 
     let a_in = back.a;
     let a_l = clamp(lay.a * P.opacity, 0.0, 1.0);
@@ -304,6 +310,13 @@ fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
             ab /= f32(TAPS);
             bg /= f32(TAPS);
             l = l + bg * (1.0 - ab) * FX.wrap.x;
+        }
+        if (FX.haze.w > 0.0) {
+            l = mix(l, FX.haze.rgb, clamp(FX.haze.w, 0.0, 1.0));
+        }
+        if (FX.game.y >= 2.0) {
+            let lv = FX.game.y - 1.0;
+            l = from_perceptual(floor(to_perceptual(l) * lv + 0.5) / lv);
         }
         if (FX.grain.x > 0.0) {
             let cell = floor(pc / max(FX.grain.y, 0.5));

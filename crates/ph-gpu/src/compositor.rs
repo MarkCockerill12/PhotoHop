@@ -72,6 +72,10 @@ pub struct FxSample {
     pub relight3: [f32; 4],
     /// canvas px → source px (set by the compositor), enabled flag (set by the compositor)
     pub scale: [f32; 4],
+    /// haze colour rgb, haze amount
+    pub haze: [f32; 4],
+    /// pixel block size (canvas px), posterize levels
+    pub game: [f32; 4],
 }
 
 /// A cast + contact shadow drawn onto the backdrop before the layer itself.

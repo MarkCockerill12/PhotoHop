@@ -101,6 +101,14 @@ pub fn integration_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
     let fx = layer.fx.clone();
     egui::CollapsingHeader::new("Integration").default_open(true).show(ui, |ui| {
         ui.label(egui::RichText::new("Make the layer sit in the scene").weak());
+        ui.horizontal(|ui| {
+            if ui.button("Match grain & sharpness").on_hover_text("Measure the background's noise and softness and copy them (no AI)").clicked() {
+                app.status = app.match_detail().unwrap_or_else(|e| format!("Match failed: {e:#}"));
+            }
+            if ui.button("Match light").on_hover_text("Estimate the scene's light colour, ambient and direction for Relight (no AI)").clicked() {
+                app.status = app.match_light().unwrap_or_else(|e| format!("Match failed: {e:#}"));
+            }
+        });
         egui::Grid::new("fx_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
             anim_row(app, ui, id, "Light wrap", fx.light_wrap.at(t), 0.0..=1.0, |l| &mut l.fx.light_wrap);
             plain_row(app, ui, id, "Wrap width", fx.light_wrap_width, 1.0..=120.0, |l, v| l.fx.light_wrap_width = v);
@@ -108,11 +116,21 @@ pub fn integration_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
             anim_row(app, ui, id, "Sharpen", fx.sharpen.at(t), 0.0..=2.0, |l| &mut l.fx.sharpen);
             anim_row(app, ui, id, "Grain", fx.grain.at(t), 0.0..=0.15, |l| &mut l.fx.grain);
             plain_row(app, ui, id, "Grain size", fx.grain_size, 0.5..=6.0, |l, v| l.fx.grain_size = v);
+            anim_row(app, ui, id, "Haze", fx.haze.at(t), 0.0..=1.0, |l| &mut l.fx.haze);
+            colour_row(app, ui, id, "Haze colour", fx.haze_color, |l, v| l.fx.haze_color = v);
         });
         let mut mono = fx.grain_mono;
         if ui.checkbox(&mut mono, "Monochrome grain").changed() {
             app.edit("Grain colour", |d| d.layer_mut(id).map_or((), |l| l.fx.grain_mono = mono));
         }
+
+        egui::CollapsingHeader::new("Game-ify").default_open(false).show(ui, |ui| {
+            ui.label(egui::RichText::new("Make yourself look like part of the game's graphics").weak());
+            egui::Grid::new("game_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
+                plain_row(app, ui, id, "Pixel size", fx.pixelate, 0.0..=32.0, |l, v| l.fx.pixelate = v);
+                plain_row(app, ui, id, "Posterize", fx.posterize, 0.0..=32.0, |l, v| l.fx.posterize = v);
+            });
+        });
 
         ui.separator();
         let s = &fx.shadow;

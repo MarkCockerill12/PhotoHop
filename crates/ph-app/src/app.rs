@@ -460,6 +460,69 @@ impl App {
         }))
     }
 
+    /// The layer used as "the scene" for automatic matching: the chosen reference, else the layer below.
+    fn reference_for(&self, id: LayerId) -> Result<LayerId> {
+        let idx = self.doc.layer_index(id).context("layer missing")?;
+        self.match_reference
+            .filter(|r| *r != id && self.doc.layer(*r).is_some())
+            .or_else(|| idx.checked_sub(1).map(|i| self.doc.layers[i].id))
+            .context("add a background layer below this one (or pick a reference) first")
+    }
+
+    /// Set grain and blur so the layer's noise and sharpness match the reference (no AI).
+    pub fn match_detail(&mut self) -> Result<String> {
+        use crate::analysis::{Luma, blur_to_match};
+        let id = self.selected.context("select the layer to adjust")?;
+        let reference = self.reference_for(id)?;
+        let (t, auto) = (self.time, self.auto_key);
+        let canvas_scale = |app: &App, lid: LayerId| -> f32 {
+            app.doc.layer(lid).map_or(1.0, |l| app.doc.layer_matrix(l, t).matrix2.x_axis.length())
+        };
+        let (ks, kr) = (canvas_scale(self, id), canvas_scale(self, reference));
+        let src = self.layer_frame(id).context("this layer has no pixels yet")?;
+        let refr = self.layer_frame(reference).context("reference has no pixels yet")?;
+        let one = |_: f32, _: f32| 1.0;
+        // Compare both at the reference's on-canvas scale (that's how the viewer sees them).
+        let ls = Luma::from_frame(&src, ks, &one);
+        let lr = Luma::from_frame(&refr, kr, &one);
+        let lim = 640.0 / (src.width.max(src.height) as f32 * ks);
+        let px_per_canvas = lim.min(1.0);
+        let radius_luma = blur_to_match(&ls, lr.detail());
+        let blur_canvas = radius_luma / px_per_canvas.max(1e-3);
+        let (ns, nr) = (ls.noise(), lr.noise());
+        let grain = ((nr * nr - ns * ns).max(0.0)).sqrt() / 0.408;
+        self.edit("Match grain & sharpness", |d| {
+            if let Some(l) = d.layer_mut(id) {
+                l.fx.blur.set(t, blur_canvas.min(40.0), auto);
+                l.fx.grain.set(t, grain.min(0.15), auto);
+                l.fx.grain_size = (1.0 / kr.max(1e-3)).clamp(0.75, 4.0);
+            }
+        });
+        Ok(format!("Matched detail: blur {blur_canvas:.1}px, grain {grain:.3} (background noise {nr:.3}, yours {ns:.3})."))
+    }
+
+    /// Set the relight colour, ambient and direction from the reference's light (no AI).
+    pub fn match_light(&mut self) -> Result<String> {
+        let id = self.selected.context("select the layer to relight")?;
+        let reference = self.reference_for(id)?;
+        let frame = self.layer_frame(reference).context("reference has no pixels yet")?;
+        let e = crate::analysis::estimate_light(&frame);
+        let (t, auto) = (self.time, self.auto_key);
+        self.edit("Match light", |d| {
+            if let Some(l) = d.layer_mut(id) {
+                let r = &mut l.fx.relight;
+                r.enabled = true;
+                r.color = e.color;
+                r.ambient.set(t, e.ambient, auto);
+                r.azimuth.set(t, e.azimuth, auto);
+            }
+        });
+        Ok(format!(
+            "Light from the scene: {:.0}°, ambient {:.2}, colour ({:.2}, {:.2}, {:.2}).",
+            e.azimuth, e.ambient, e.color[0], e.color[1], e.color[2]
+        ))
+    }
+
     /// Match the selected layer's colours to a reference layer (default: the layer below it).
     pub fn match_colour(&mut self) -> Result<()> {
         use crate::matching::{stats, transfer};

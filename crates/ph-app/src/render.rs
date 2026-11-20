@@ -106,7 +106,14 @@ fn hash_of(parts: impl Hash) -> u64 {
 /// GPU effect parameters for a layer at time `t` (None when no effect is active).
 fn fx_sample(fx: &ph_core::LayerFx, t: f64, fps: f64, has_normals: bool) -> Option<FxSample> {
     let r = &fx.relight;
-    let active = fx.light_wrap.at(t) > 0.0 || fx.blur.at(t) > 0.0 || fx.sharpen.at(t) > 0.0 || fx.grain.at(t) > 0.0 || r.enabled;
+    let active = fx.light_wrap.at(t) > 0.0
+        || fx.blur.at(t) > 0.0
+        || fx.sharpen.at(t) > 0.0
+        || fx.grain.at(t) > 0.0
+        || fx.haze.at(t) > 0.0
+        || fx.pixelate >= 1.5
+        || fx.posterize >= 2.0
+        || r.enabled;
     if !active {
         return None;
     }
@@ -119,6 +126,8 @@ fn fx_sample(fx: &ph_core::LayerFx, t: f64, fps: f64, has_normals: bool) -> Opti
         relight2: [r.ambient.at(t), r.rim.at(t), r.wrap, r.amount.at(t)],
         relight3: [r.rim_color[0], r.rim_color[1], r.rim_color[2], f32::from(u8::from(has_normals))],
         scale: [0.0; 4],
+        haze: [fx.haze_color[0], fx.haze_color[1], fx.haze_color[2], fx.haze.at(t)],
+        game: [fx.pixelate, fx.posterize, 0.0, 0.0],
     })
 }
 
