@@ -16,6 +16,8 @@ pub enum AiTask {
     Matte,
     /// Text-prompted mask (SAM 3).
     Segment(String),
+    /// Surface normals for relighting (Sapiens2).
+    Normals,
 }
 
 impl AiTask {
@@ -23,6 +25,7 @@ impl AiTask {
         match self {
             Self::Matte => "AI cutout".into(),
             Self::Segment(p) => format!("AI mask \"{p}\""),
+            Self::Normals => "AI normals".into(),
         }
     }
 }
@@ -118,7 +121,7 @@ impl App {
             }
             LayerContent::Solid { .. } => bail!("AI masks need a photo, video or paint layer"),
         };
-        let output = dir.join(format!("mask-{}.png", id.0));
+        let output = dir.join(format!("{}-{}.png", if task == AiTask::Normals { "normals" } else { "mask" }, id.0));
         let mut args = vec![String::new(), input.to_string_lossy().into_owned(), output.to_string_lossy().into_owned()];
         match &task {
             AiTask::Matte => args[0] = "matte".into(),
@@ -126,6 +129,7 @@ impl App {
                 args[0] = "segment".into();
                 args.extend(["--prompt".into(), prompt.clone()]);
             }
+            AiTask::Normals => args[0] = "normals".into(),
         }
         let (tx, rx) = unbounded();
         let python = self.ai.python.clone();
@@ -146,6 +150,18 @@ impl App {
         let job = self.ai.job.take().expect("job");
         let applied: Result<String> = (|| {
             let v = result.map_err(|e| anyhow::anyhow!(e))?;
+            if job.task == AiTask::Normals {
+                let raster = PaintRaster::load(&job.output)?;
+                let id = job.layer;
+                self.edit("AI normals", |d| {
+                    if let Some(l) = d.layer_mut(id) {
+                        l.has_normals = true;
+                        l.fx.relight.enabled = true;
+                    }
+                });
+                self.normals.insert(id, raster);
+                return Ok(format!("Normals estimated in {:.1}s — Relight is on (Integration section).", v["seconds"].as_f64().unwrap_or(0.0)));
+            }
             let raster = load_mask(&job.output)?;
             let (w, h) = (raster.width, raster.height);
             let id = job.layer;

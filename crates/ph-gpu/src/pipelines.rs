@@ -9,6 +9,14 @@ pub struct CompositeViews<'a> {
     pub dst: &'a wgpu::TextureView,
     pub src: &'a wgpu::TextureView,
     pub mask: &'a wgpu::TextureView,
+    pub normals: &'a wgpu::TextureView,
+}
+
+/// Uniform buffers bound to one layer composite pass.
+pub struct CompositeBuffers<'a> {
+    pub params: &'a wgpu::Buffer,
+    pub curves: &'a wgpu::Buffer,
+    pub fx: &'a wgpu::Buffer,
 }
 
 pub struct Pipelines {
@@ -16,7 +24,9 @@ pub struct Pipelines {
     pub clear: wgpu::ComputePipeline,
     pub display: wgpu::ComputePipeline,
     pub scope: wgpu::ComputePipeline,
+    pub shadow: wgpu::ComputePipeline,
     scope_bgl: wgpu::BindGroupLayout,
+    shadow_bgl: wgpu::BindGroupLayout,
     composite_bgl: wgpu::BindGroupLayout,
     clear_bgl: wgpu::BindGroupLayout,
     display_bgl: wgpu::BindGroupLayout,
@@ -103,6 +113,24 @@ impl Pipelines {
                 uniform_entry(4),
                 tex_entry(5),
                 uniform_entry(6),
+                uniform_entry(7),
+                tex_entry(8),
+            ],
+        });
+        let shadow_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("shadow"),
+            entries: &[
+                tex_entry(0),
+                storage_entry(1, WORK_FORMAT),
+                tex_entry(2),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                uniform_entry(4),
+                tex_entry(5),
             ],
         });
         let clear_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -127,6 +155,8 @@ impl Pipelines {
             ],
         });
         Self {
+            shadow: pipeline(device, &comp, &shadow_bgl, "shadow"),
+            shadow_bgl,
             scope: pipeline(device, &disp, &scope_bgl, "scope_downsample"),
             scope_bgl,
             composite: pipeline(device, &comp, &composite_bgl, "composite"),
@@ -169,8 +199,7 @@ impl Pipelines {
         device: &wgpu::Device,
         v: &CompositeViews<'_>,
         sampler: &wgpu::Sampler,
-        params: &wgpu::Buffer,
-        curves: &wgpu::Buffer,
+        b: &CompositeBuffers<'_>,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("composite"),
@@ -180,9 +209,32 @@ impl Pipelines {
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(v.dst) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(v.src) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(sampler) },
+                wgpu::BindGroupEntry { binding: 4, resource: b.params.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(v.mask) },
+                wgpu::BindGroupEntry { binding: 6, resource: b.curves.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: b.fx.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(v.normals) },
+            ],
+        })
+    }
+
+    pub fn shadow_bind_group(
+        &self,
+        device: &wgpu::Device,
+        v: &CompositeViews<'_>,
+        sampler: &wgpu::Sampler,
+        params: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow"),
+            layout: &self.shadow_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(v.backdrop) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(v.dst) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(v.src) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(sampler) },
                 wgpu::BindGroupEntry { binding: 4, resource: params.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(v.mask) },
-                wgpu::BindGroupEntry { binding: 6, resource: curves.as_entire_binding() },
             ],
         })
     }

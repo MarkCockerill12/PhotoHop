@@ -2,7 +2,7 @@
 //! each visible layer is blended onto a ping-pong accumulation target by a compute pass,
 //! then a display pass converts to sRGB for the viewer.
 
-use crate::pipelines::{CompositeViews, Pipelines};
+use crate::pipelines::{CompositeBuffers, CompositeViews, Pipelines};
 use glam::{Affine2, Vec2};
 use half::f16;
 use ph_core::BlendMode;
@@ -45,6 +45,63 @@ pub struct LayerDraw {
     pub grade: Option<ph_core::GradeSample>,
     /// Baked curve LUT (`[r, g, b, master]` × 256), when the layer has curves.
     pub curves: Option<Vec<[f32; 4]>>,
+    /// Integration effects (light wrap, blur/sharpen, grain, relight).
+    pub fx: Option<FxSample>,
+    /// Key of an uploaded normal map (RGB = normal·0.5+0.5) for relighting.
+    pub normals: Option<u64>,
+    pub shadow: Option<ShadowDraw>,
+}
+
+/// Effect parameters for one layer at one time, laid out for the GPU (see `FxParams` in WGSL).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct FxSample {
+    /// light-wrap amount, wrap width (canvas px), blur (canvas px), sharpen
+    pub wrap: [f32; 4],
+    /// grain amount, grain size (canvas px), mono (0/1), frame seed
+    pub grain: [f32; 4],
+    /// light direction xyz, relight enabled (0/1)
+    pub relight0: [f32; 4],
+    /// light colour rgb, intensity
+    pub relight1: [f32; 4],
+    /// ambient, rim, wrap, amount
+    pub relight2: [f32; 4],
+    /// rim colour rgb, has normals (0/1)
+    pub relight3: [f32; 4],
+    /// canvas px → source px (set by the compositor), enabled flag (set by the compositor)
+    pub scale: [f32; 4],
+}
+
+/// A cast + contact shadow drawn onto the backdrop before the layer itself.
+#[derive(Clone, Copy, Debug)]
+pub struct ShadowDraw {
+    /// Canvas → canvas projection of the silhouette onto the ground.
+    pub cast: Affine2,
+    pub contact: Affine2,
+    /// Blur radii in canvas pixels.
+    pub softness: f32,
+    pub contact_softness: f32,
+    pub opacity: f32,
+    pub contact_opacity: f32,
+    pub color: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ShadowParams {
+    cast: [[f32; 4]; 3],
+    contact: [[f32; 4]; 3],
+    size: [f32; 4],
+    color: [f32; 4],
+    extra: [f32; 4],
+}
+
+fn rows(m: Affine2) -> [[f32; 4]; 3] {
+    [
+        [m.matrix2.x_axis.x, m.matrix2.x_axis.y, 0.0, 0.0],
+        [m.matrix2.y_axis.x, m.matrix2.y_axis.y, 0.0, 0.0],
+        [m.translation.x, m.translation.y, 0.0, 0.0],
+    ]
 }
 
 struct GpuSource {
@@ -73,6 +130,7 @@ pub struct Compositor {
     /// 1×1 white texture bound when a layer has no mask.
     white_view: wgpu::TextureView,
     identity_lut: wgpu::Buffer,
+    zero_fx: wgpu::Buffer,
     sources: HashMap<u64, GpuSource>,
     targets: Option<Targets>,
     /// Bumped whenever the display texture is recreated (the UI must re-register it).
@@ -155,6 +213,7 @@ impl Compositor {
         let pipes = Pipelines::new(device);
         let identity: Vec<[f32; 4]> = (0..256).map(|i| [i as f32 / 255.0; 4]).collect();
         let identity_lut = pipes.uniform(device, bytemuck::cast_slice(&identity));
+        let zero_fx = pipes.uniform(device, bytemuck::bytes_of(&FxSample::default()));
         Self {
             device: device.clone(),
             queue: queue.clone(),
@@ -162,6 +221,7 @@ impl Compositor {
             sampler,
             white_view,
             identity_lut,
+            zero_fx,
             sources: HashMap::new(),
             targets: None,
             display_generation: 0,
@@ -254,6 +314,41 @@ impl Compositor {
             }
             let mask_view = layer.mask.and_then(|k| self.sources.get(&k)).map(|m| &m.view);
             let inv = layer.matrix.inverse();
+            // Canvas pixels → source pixels (for effect radii given in canvas pixels).
+            let px_scale = inv.matrix2.x_axis.length().max(1e-6);
+
+            if let Some(sh) = layer.shadow {
+                let src_from_cast = inv * sh.cast.inverse();
+                let src_from_contact = inv * sh.contact.inverse();
+                let sp = ShadowParams {
+                    cast: rows(src_from_cast),
+                    contact: rows(src_from_contact),
+                    size: [layer.size.x, layer.size.y, sh.softness * px_scale, sh.contact_softness * px_scale],
+                    color: [sh.color[0], sh.color[1], sh.color[2], sh.opacity.clamp(0.0, 1.0) * layer.opacity.clamp(0.0, 1.0)],
+                    extra: [
+                        sh.contact_opacity.clamp(0.0, 1.0) * layer.opacity.clamp(0.0, 1.0),
+                        f32::from(u8::from(mask_view.is_some())),
+                        f32::from(u8::from(layer.mask_invert)),
+                        0.0,
+                    ],
+                };
+                let sbuf = self.pipes.uniform(&self.device, bytemuck::bytes_of(&sp));
+                let next = 1 - cur;
+                let views = CompositeViews {
+                    backdrop: &t.accum_views[cur],
+                    dst: &t.accum_views[next],
+                    src: &src.view,
+                    mask: mask_view.unwrap_or(&self.white_view),
+                    normals: &self.white_view,
+                };
+                let bg = self.pipes.shadow_bind_group(&self.device, &views, &self.sampler, &sbuf);
+                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("shadow"), timestamp_writes: None });
+                pass.set_pipeline(&self.pipes.shadow);
+                pass.set_bind_group(0, &bg, &[]);
+                pass.dispatch_workgroups(groups(w), groups(h), 1);
+                drop(pass);
+                cur = next;
+            }
             let params = LayerParams {
                 inv0: [inv.matrix2.x_axis.x, inv.matrix2.x_axis.y, 0.0, 0.0],
                 inv1: [inv.matrix2.y_axis.x, inv.matrix2.y_axis.y, 0.0, 0.0],
@@ -272,6 +367,14 @@ impl Compositor {
                 _extra: [0; 3],
             };
             let lut_buf = layer.curves.as_ref().map(|lut| self.pipes.uniform(&self.device, bytemuck::cast_slice(lut)));
+            let normals_view = layer.normals.and_then(|k| self.sources.get(&k)).map(|n| &n.view);
+            let fx_buf = layer.fx.map(|mut f| {
+                f.scale = [px_scale, 1.0, 0.0, 0.0];
+                if normals_view.is_none() {
+                    f.relight3[3] = 0.0;
+                }
+                self.pipes.uniform(&self.device, bytemuck::bytes_of(&f))
+            });
             let ubuf = self.pipes.uniform(&self.device, bytemuck::bytes_of(&params));
             let next = 1 - cur;
             let views = CompositeViews {
@@ -279,9 +382,14 @@ impl Compositor {
                 dst: &t.accum_views[next],
                 src: &src.view,
                 mask: mask_view.unwrap_or(&self.white_view),
+                normals: normals_view.unwrap_or(&self.white_view),
             };
-            let lut = lut_buf.as_ref().unwrap_or(&self.identity_lut);
-            let bg = self.pipes.composite_bind_group(&self.device, &views, &self.sampler, &ubuf, lut);
+            let bufs = CompositeBuffers {
+                params: &ubuf,
+                curves: lut_buf.as_ref().unwrap_or(&self.identity_lut),
+                fx: fx_buf.as_ref().unwrap_or(&self.zero_fx),
+            };
+            let bg = self.pipes.composite_bind_group(&self.device, &views, &self.sampler, &bufs);
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("layer"), timestamp_writes: None });
             pass.set_pipeline(&self.pipes.composite);
             pass.set_bind_group(0, &bg, &[]);

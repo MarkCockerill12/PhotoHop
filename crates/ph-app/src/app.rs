@@ -64,6 +64,8 @@ pub struct App {
     pub paint: HashMap<LayerId, PaintRaster>,
     /// Layer masks (red channel = coverage, white = visible).
     pub masks: HashMap<LayerId, PaintRaster>,
+    /// AI-estimated normal maps (RGB = n·0.5+0.5) used by relighting.
+    pub normals: HashMap<LayerId, PaintRaster>,
     /// Brush/eraser paint into the selected layer's mask instead of its pixels.
     pub edit_mask: bool,
     pub match_mode: crate::matching::MatchMode,
@@ -85,6 +87,22 @@ pub struct App {
     pub auto_key: bool,
 }
 
+/// Fraction of the frame height just below the lowest row that has a meaningful run of solid pixels.
+pub fn lowest_solid_row(frame: &ph_media::Frame, mask: impl Fn(f32, f32) -> f32) -> f32 {
+    let (w, h) = (frame.width as usize, frame.height as usize);
+    let need = (w / 200).max(2);
+    for y in (0..h).rev() {
+        let v = (y as f32 + 0.5) / h as f32;
+        let solid = (0..w)
+            .filter(|&x| frame.pixels[(y * w + x) * 4 + 3].to_f32() * mask((x as f32 + 0.5) / w as f32, v) > 0.5)
+            .count();
+        if solid >= need {
+            return (y + 1) as f32 / h as f32;
+        }
+    }
+    1.0
+}
+
 impl App {
     pub fn new(ctx: &egui::Context, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         Self {
@@ -99,6 +117,7 @@ impl App {
             media: MediaCache::new(ctx.clone()),
             paint: HashMap::new(),
             masks: HashMap::new(),
+            normals: HashMap::new(),
             edit_mask: false,
             match_mode: crate::matching::MatchMode::ColourCast,
             match_reference: None,
@@ -188,6 +207,7 @@ impl App {
         self.selected = None;
         self.paint.clear();
         self.masks.clear();
+        self.normals.clear();
         self.edit_mask = false;
         self.match_reference = None;
         self.pixel_undo.clear();
@@ -206,6 +226,11 @@ impl App {
                 let file = project_file::paint_layer_path(path, l.id);
                 let raster = PaintRaster::load(&file).unwrap_or_else(|_| PaintRaster::new(width, height));
                 self.paint.insert(l.id, raster);
+            }
+            if l.has_normals
+                && let Ok(r) = PaintRaster::load(&project_file::normals_path(path, l.id))
+            {
+                self.normals.insert(l.id, r);
             }
             if let Some(m) = &l.mask {
                 let file = project_file::mask_path(path, l.id);
@@ -226,6 +251,11 @@ impl App {
         for (id, raster) in &self.paint {
             if self.doc.layer(*id).is_some() {
                 raster.save(&project_file::paint_layer_path(&path, *id)).context("saving paint layer")?;
+            }
+        }
+        for (id, raster) in &self.normals {
+            if self.doc.layer(*id).is_some_and(|l| l.has_normals) {
+                raster.save(&project_file::normals_path(&path, *id)).context("saving normal map")?;
             }
         }
         for (id, raster) in &self.masks {
@@ -336,6 +366,9 @@ impl App {
         if let Some(r) = self.masks.get(&id) {
             self.masks.insert(new_id, r.duplicate());
         }
+        if let Some(r) = self.normals.get(&id) {
+            self.normals.insert(new_id, r.duplicate());
+        }
         self.selected = Some(new_id);
     }
 
@@ -396,6 +429,22 @@ impl App {
                 Some(ph_media::Frame::new(1, 1, px.to_vec()))
             }
         }
+    }
+
+    /// Ground line (fraction of layer height) where the subject's visible pixels end — the feet.
+    pub fn find_ground(&mut self, id: LayerId) -> Option<f32> {
+        let frame = self.layer_frame(id)?;
+        let mask = self.doc.layer(id).and_then(|l| l.mask.as_ref().filter(|m| m.enabled).map(|m| m.invert));
+        let raster = self.masks.get(&id);
+        Some(lowest_solid_row(&frame, |u, v| match (raster, mask) {
+            (Some(r), Some(inv)) => {
+                let x = ((u * r.width as f32) as u32).min(r.width - 1);
+                let y = ((v * r.height as f32) as u32).min(r.height - 1);
+                let m = r.data[(y * r.width + x) as usize][0];
+                if inv { 1.0 - m } else { m }
+            }
+            _ => 1.0,
+        }))
     }
 
     /// Match the selected layer's colours to a reference layer (default: the layer below it).
@@ -460,5 +509,24 @@ impl App {
         if self.playing {
             self.play_anchor = Some((Instant::now(), self.time));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use half::f16;
+
+    #[test]
+    fn ground_is_below_lowest_solid_row() {
+        // 10x10, opaque rows 2..=6, transparent below.
+        let px: Vec<f16> = (0..100)
+            .flat_map(|i| {
+                let a = if (2..=6).contains(&(i / 10)) { 1.0 } else { 0.0 };
+                [a, a, a, a].map(f16::from_f32)
+            })
+            .collect();
+        let f = ph_media::Frame::new(10, 10, px);
+        assert!((lowest_solid_row(&f, |_, _| 1.0) - 0.7).abs() < 1e-6);
     }
 }

@@ -3,6 +3,7 @@
 mod colour;
 mod curves;
 mod inspector;
+mod integration;
 mod layers;
 mod menu;
 mod timeline;

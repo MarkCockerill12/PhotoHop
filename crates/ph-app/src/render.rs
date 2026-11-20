@@ -5,7 +5,7 @@ use glam::Vec2;
 use half::f16;
 use ph_core::doc::{LayerContent, MediaRef};
 use ph_core::{LayerId, Project};
-use ph_gpu::{Compositor, LayerDraw};
+use ph_gpu::{Compositor, FxSample, LayerDraw, ShadowDraw};
 use ph_media::Frame;
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -99,6 +99,25 @@ fn hash_of(parts: impl Hash) -> u64 {
     h.finish()
 }
 
+/// GPU effect parameters for a layer at time `t` (None when no effect is active).
+fn fx_sample(fx: &ph_core::LayerFx, t: f64, fps: f64, has_normals: bool) -> Option<FxSample> {
+    let r = &fx.relight;
+    let active = fx.light_wrap.at(t) > 0.0 || fx.blur.at(t) > 0.0 || fx.sharpen.at(t) > 0.0 || fx.grain.at(t) > 0.0 || r.enabled;
+    if !active {
+        return None;
+    }
+    let d = r.direction(t);
+    Some(FxSample {
+        wrap: [fx.light_wrap.at(t), fx.light_wrap_width, fx.blur.at(t), fx.sharpen.at(t)],
+        grain: [fx.grain.at(t), fx.grain_size, f32::from(u8::from(fx.grain_mono)), ((t * fps).round() % 997.0) as f32],
+        relight0: [d[0], d[1], d[2], f32::from(u8::from(r.enabled))],
+        relight1: [r.color[0], r.color[1], r.color[2], r.intensity.at(t)],
+        relight2: [r.ambient.at(t), r.rim.at(t), r.wrap, r.amount.at(t)],
+        relight3: [r.rim_color[0], r.rim_color[1], r.rim_color[2], f32::from(u8::from(has_normals))],
+        scale: [0.0; 4],
+    })
+}
+
 fn paint_key(id: LayerId) -> u64 {
     hash_of(("paint", id))
 }
@@ -111,6 +130,7 @@ pub fn composite(
     t: f64,
     paint: &HashMap<LayerId, PaintRaster>,
     masks: &HashMap<LayerId, PaintRaster>,
+    normals: &HashMap<LayerId, PaintRaster>,
     mut fetch: impl FnMut(&MediaRef, f64) -> Option<(u64, Frame)>,
 ) {
     let mut draws = Vec::new();
@@ -158,19 +178,48 @@ pub fn composite(
             }
             _ => None,
         };
+        let normals_key = match (layer.has_normals, normals.get(&layer.id)) {
+            (true, Some(r)) if layer.fx.relight.enabled => {
+                let nkey = hash_of(("normals", layer.id));
+                if !gpu.has_source(nkey, r.revision) {
+                    let f = r.to_frame();
+                    gpu.upload(nkey, r.revision, f.width, f.height, &f.pixels);
+                }
+                keep.insert(nkey);
+                Some(nkey)
+            }
+            _ => None,
+        };
+        let matrix = layer.transform.matrix(t, size);
+        let fx = fx_sample(&layer.fx, t, doc.canvas.fps, normals_key.is_some());
+        let shadow = layer.fx.shadow.enabled.then(|| {
+            let s = &layer.fx.shadow;
+            ShadowDraw {
+                cast: s.cast_matrix(t, matrix, size, 1.0),
+                contact: s.contact_matrix(matrix, size),
+                softness: s.softness.at(t),
+                contact_softness: s.softness.at(t) * 0.25 + 1.5,
+                opacity: s.opacity.at(t),
+                contact_opacity: s.contact.at(t),
+                color: s.color,
+            }
+        });
         let graded = layer.grade.enabled && !layer.grade.is_identity();
         let grade = graded.then(|| layer.grade.sample(t));
         let curves = (graded && !layer.grade.curves.is_identity()).then(|| layer.grade.curves.bake());
         draws.push(LayerDraw {
             source: key,
             size,
-            matrix: layer.transform.matrix(t, size),
+            matrix,
             opacity: layer.opacity.at(t),
             blend: layer.blend,
             mask,
             mask_invert: layer.mask.as_ref().is_some_and(|m| m.invert),
             grade,
             curves,
+            fx,
+            normals: normals_key,
+            shadow,
         });
     }
     gpu.retain_sources(&keep);

@@ -15,6 +15,7 @@ Then point PhotoHop at the environment's Python (AI ▸ Settings, or `PHOTOHOP_A
 | Command | Model (licence) | Notes |
 |---|---|---|
 | `matte IN OUT` | BiRefNet_HR (MIT) | automatic cutout of the main subject |
+| `normals IN OUT` | Sapiens2 normal 1B (Sapiens2 licence) | normal map of people, used by Relight |
 | `segment IN OUT --prompt "person"` | SAM 3 (Meta SAM licence, gated: accept on Hugging Face and run `hf auth login`) | any text prompt, e.g. "toy gun" |
 
 Models download automatically on first use into the Hugging Face cache (`HF_HOME` to move it).

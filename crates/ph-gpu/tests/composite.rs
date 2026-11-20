@@ -3,7 +3,7 @@
 use glam::{Affine2, Vec2};
 use half::f16;
 use ph_core::BlendMode;
-use ph_gpu::{Compositor, LayerDraw};
+use ph_gpu::{Compositor, FxSample, LayerDraw, ShadowDraw};
 
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -25,7 +25,7 @@ fn normal_over_and_multiply() {
     let mut c = Compositor::new(&device, &queue);
     c.upload(1, 0, 4, 4, &solid(4, 4, [1.0, 0.0, 0.0, 0.5]));
     let full = Affine2::from_translation(Vec2::ZERO);
-    let draw = |blend| LayerDraw { source: 1, size: Vec2::new(4.0, 4.0), matrix: full, opacity: 1.0, blend, mask: None, mask_invert: false, grade: None, curves: None };
+    let draw = |blend| LayerDraw { source: 1, size: Vec2::new(4.0, 4.0), matrix: full, opacity: 1.0, blend, mask: None, mask_invert: false, grade: None, curves: None, fx: None, normals: None, shadow: None };
 
     c.render(4, 4, [0.0, 0.0, 1.0, 1.0], &[draw(BlendMode::Normal)]);
     let (_, _, px) = c.read_back().unwrap();
@@ -65,6 +65,9 @@ fn grade_and_mask() {
         mask_invert: false,
         grade: None,
         curves: None,
+        fx: None,
+        normals: None,
+        shadow: None,
     };
 
     let identity = ph_core::Grade::default().sample(0.0);
@@ -122,6 +125,9 @@ fn curves_and_qualifier() {
         mask_invert: false,
         curves: (!grade.curves.is_identity()).then(|| grade.curves.bake()),
         grade: Some(grade.sample(0.0)),
+        fx: None,
+        normals: None,
+        shadow: None,
     };
     let px0 = |c: &mut Compositor, d: LayerDraw| {
         c.render(4, 4, [0.0; 4], &[d]);
@@ -146,4 +152,54 @@ fn curves_and_qualifier() {
     g.qualifier.show_matte = true;
     let p = px0(&mut c, draw(g));
     assert!(p.iter().all(|v| *v > 0.9), "matte {p:?}");
+}
+
+#[test]
+fn shadow_and_light_wrap() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut c = Compositor::new(&device, &queue);
+    // 8x8 opaque white square in the middle of a 32x32 canvas.
+    c.upload(1, 0, 8, 8, &solid(8, 8, [1.0, 1.0, 1.0, 1.0]));
+    let m = Affine2::from_translation(Vec2::new(12.0, 8.0));
+    let base = || LayerDraw {
+        source: 1,
+        size: Vec2::new(8.0, 8.0),
+        matrix: m,
+        opacity: 1.0,
+        blend: BlendMode::Normal,
+        mask: None,
+        mask_invert: false,
+        grade: None,
+        curves: None,
+        fx: None,
+        normals: None,
+        shadow: None,
+    };
+    let at = |px: &[half::f16], x: usize, y: usize| px[(y * 32 + x) * 4].to_f32();
+    // Shadow straight down (pure translation by 8px) darkens the grey background below the square.
+    let shadow = ShadowDraw {
+        cast: Affine2::from_translation(Vec2::new(0.0, 8.0)),
+        contact: Affine2::IDENTITY,
+        softness: 0.0,
+        contact_softness: 0.0,
+        opacity: 1.0,
+        contact_opacity: 0.0,
+        color: [0.0; 3],
+    };
+    c.render(32, 32, [0.5, 0.5, 0.5, 1.0], &[LayerDraw { shadow: Some(shadow), ..base() }]);
+    let (_, _, px) = c.read_back().unwrap();
+    assert!(at(&px, 15, 20) < 0.05, "shadow under the square: {}", at(&px, 15, 20));
+    assert!((at(&px, 2, 2) - 0.5).abs() < 0.01, "background elsewhere untouched");
+    assert!((at(&px, 15, 12) - 1.0).abs() < 0.01, "square itself drawn on top");
+
+    // Light wrap: a black square over a bright red background picks up red at its edge, not its centre.
+    c.upload(2, 0, 8, 8, &solid(8, 8, [0.0, 0.0, 0.0, 1.0]));
+    let fx = FxSample { wrap: [1.0, 6.0, 0.0, 0.0], ..Default::default() };
+    c.render(32, 32, [1.0, 0.0, 0.0, 1.0], &[LayerDraw { source: 2, fx: Some(fx), ..base() }]);
+    let (_, _, px) = c.read_back().unwrap();
+    let (edge, centre) = (at(&px, 12, 12), at(&px, 15, 12));
+    assert!(edge > 0.1 && edge > centre, "edge {edge} centre {centre}");
 }

@@ -40,6 +40,77 @@ struct LayerParams {
 @group(0) @binding(5) var mask_tex: texture_2d<f32>;
 @group(0) @binding(6) var<uniform> curve_lut: array<vec4<f32>, 256>;
 
+struct FxParams {
+    wrap: vec4<f32>,      // light-wrap amount, wrap width (canvas px), blur (canvas px), sharpen
+    grain: vec4<f32>,     // amount, size (canvas px), mono, frame seed
+    relight0: vec4<f32>,  // light direction xyz, enabled
+    relight1: vec4<f32>,  // light colour rgb, intensity
+    relight2: vec4<f32>,  // ambient, rim, wrap (sss), amount
+    relight3: vec4<f32>,  // rim colour rgb, has normals
+    scale: vec4<f32>,     // canvas px -> source px, enabled, 0, 0
+};
+@group(0) @binding(7) var<uniform> FX: FxParams;
+@group(0) @binding(8) var normal_tex: texture_2d<f32>;
+
+const TAPS: u32 = 16u;
+
+fn disk(i: u32) -> vec2<f32> {
+    let r = sqrt((f32(i) + 0.5) / f32(TAPS));
+    let a = f32(i) * 2.3999632;
+    return vec2<f32>(cos(a), sin(a)) * r;
+}
+
+fn hash2(p: vec2<f32>) -> f32 {
+    var q = fract(p * vec2<f32>(0.1031, 0.1030));
+    q = q + dot(q, q.yx + 33.33);
+    return fract((q.x + q.y) * q.x);
+}
+
+fn to_source(p: vec2<f32>) -> vec2<f32> {
+    return P.inv0.xy * p.x + P.inv1.xy * p.y + P.inv2.xy;
+}
+
+fn inside(s: vec2<f32>) -> bool {
+    return s.x >= 0.0 && s.y >= 0.0 && s.x <= P.src_size.x && s.y <= P.src_size.y;
+}
+
+fn sample_src(s: vec2<f32>) -> vec4<f32> {
+    if (!inside(s)) { return vec4<f32>(0.0); }
+    return textureSampleLevel(src_tex, src_sampler, s / P.src_size, 0.0);
+}
+
+/// Layer alpha (with mask) at a canvas position, unblurred — used for light wrap.
+fn layer_alpha_at(p: vec2<f32>) -> f32 {
+    let s = to_source(p);
+    if (!inside(s)) { return 0.0; }
+    let uv = s / P.src_size;
+    var a = textureSampleLevel(src_tex, src_sampler, uv, 0.0).a;
+    if (P.has_mask != 0u) {
+        var m = textureSampleLevel(mask_tex, src_sampler, uv, 0.0).r;
+        if (P.mask_invert != 0u) { m = 1.0 - m; }
+        a = a * clamp(m, 0.0, 1.0);
+    }
+    return a;
+}
+
+fn relight(l: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    var n = vec3<f32>(0.0, 0.0, 1.0);
+    if (FX.relight3.w > 0.5) {
+        n = normalize(textureSampleLevel(normal_tex, src_sampler, uv, 0.0).rgb * 2.0 - 1.0);
+    }
+    let L = FX.relight0.xyz;
+    let w = FX.relight2.z;
+    let lambert = clamp((dot(n, L) + w) / (1.0 + w), 0.0, 1.0);
+    let facing = clamp((L.z + w) / (1.0 + w), 0.05, 1.0);
+    let amb = FX.relight2.x;
+    let k = FX.relight1.w;
+    // Shading ratio: a surface facing the camera keeps its brightness; others brighten/darken.
+    let factor = (amb + k * lambert * FX.relight1.rgb) / (amb + k * facing);
+    let rim = FX.relight2.y * pow(1.0 - clamp(n.z, 0.0, 1.0), 3.0) * FX.relight3.rgb;
+    let relit = l * factor + rim * luma(l + 0.05);
+    return mix(l, relit, FX.relight2.w);
+}
+
 const AX = vec3<f32>(1.0, -0.5, -0.5);
 const BX = vec3<f32>(0.0, 0.8660254, -0.8660254);
 
@@ -180,6 +251,19 @@ fn sample_layer(p: vec2<f32>) -> vec4<f32> {
     }
     let uv = s / P.src_size;
     var c = textureSampleLevel(src_tex, src_sampler, uv, 0.0);
+    let blur_px = FX.wrap.z * FX.scale.x;
+    if (FX.scale.y > 0.5 && blur_px > 0.25) {
+        var acc = c;
+        for (var i = 0u; i < TAPS; i++) { acc += sample_src(s + disk(i) * blur_px); }
+        c = acc / f32(TAPS + 1u);
+    } else if (FX.scale.y > 0.5 && FX.wrap.w > 0.0) {
+        var acc = vec4<f32>(0.0);
+        for (var i = 0u; i < 8u; i++) {
+            let a = f32(i) * 0.7853982;
+            acc += sample_src(s + vec2<f32>(cos(a), sin(a)) * 1.5 * max(FX.scale.x, 0.5));
+        }
+        c = max(c + FX.wrap.w * (c - acc / 8.0), vec4<f32>(0.0));
+    }
     if (P.has_mask != 0u) {
         var m = textureSampleLevel(mask_tex, src_sampler, uv, 0.0).r;
         if (P.mask_invert != 0u) { m = 1.0 - m; }
@@ -202,6 +286,36 @@ fn composite(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     var l = lay.rgb / max(lay.a, 1e-6);
     if (P.has_grade != 0u) { l = grade(l); }
+    if (FX.scale.y > 0.5) {
+        let pc = vec2<f32>(gid.xy) + vec2<f32>(0.5);
+        if (FX.relight0.w > 0.5) {
+            let s = to_source(pc);
+            l = relight(l, s / P.src_size);
+        }
+        if (FX.wrap.x > 0.0) {
+            var ab = 0.0;
+            var bg = vec3<f32>(0.0);
+            let dimsf = vec2<f32>(dims);
+            for (var i = 0u; i < TAPS; i++) {
+                let q = pc + disk(i) * FX.wrap.y;
+                ab += layer_alpha_at(q);
+                bg += textureSampleLevel(backdrop, src_sampler, q / dimsf, 0.0).rgb;
+            }
+            ab /= f32(TAPS);
+            bg /= f32(TAPS);
+            l = l + bg * (1.0 - ab) * FX.wrap.x;
+        }
+        if (FX.grain.x > 0.0) {
+            let cell = floor(pc / max(FX.grain.y, 0.5));
+            let seed = vec2<f32>(FX.grain.w * 17.0, FX.grain.w * 31.0);
+            let g0 = hash2(cell + seed) + hash2(cell + seed + 71.3) - 1.0;
+            var g = vec3<f32>(g0);
+            if (FX.grain.z < 0.5) {
+                g = vec3<f32>(g0, hash2(cell + seed + 13.7) + hash2(cell + seed + 5.1) - 1.0, hash2(cell + seed + 29.9) + hash2(cell + seed + 47.2) - 1.0);
+            }
+            l = from_perceptual(max(to_perceptual(l) + g * FX.grain.x, vec3<f32>(0.0)));
+        }
+    }
     if (a_in <= 0.0) { textureStore(dst, px, vec4<f32>(l * a_l, a_l)); return; }
     let b = back.rgb / a_in;
 
@@ -227,4 +341,56 @@ fn clear(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dims = textureDimensions(clear_dst);
     if (gid.x >= dims.x || gid.y >= dims.y) { return; }
     textureStore(clear_dst, vec2<i32>(gid.xy), vec4<f32>(C.color.rgb * C.color.a, C.color.a));
+}
+
+// ---- cast + contact shadow: darkens the backdrop with the layer's projected silhouette ----
+struct ShadowParams {
+    cast0: vec4<f32>,     // canvas -> source rows for the cast shadow
+    cast1: vec4<f32>,
+    cast2: vec4<f32>,
+    contact0: vec4<f32>,  // canvas -> source rows for the contact shadow
+    contact1: vec4<f32>,
+    contact2: vec4<f32>,
+    size: vec4<f32>,      // source w, h, cast softness (src px), contact softness (src px)
+    color: vec4<f32>,     // tint rgb, cast opacity
+    extra: vec4<f32>,     // contact opacity, has mask, mask invert, 0
+};
+@group(0) @binding(0) var sh_backdrop: texture_2d<f32>;
+@group(0) @binding(1) var sh_dst: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(2) var sh_src: texture_2d<f32>;
+@group(0) @binding(3) var sh_sampler: sampler;
+@group(0) @binding(4) var<uniform> SH: ShadowParams;
+@group(0) @binding(5) var sh_mask: texture_2d<f32>;
+
+fn sh_alpha(s: vec2<f32>) -> f32 {
+    if (s.x < 0.0 || s.y < 0.0 || s.x > SH.size.x || s.y > SH.size.y) { return 0.0; }
+    let uv = s / SH.size.xy;
+    var a = textureSampleLevel(sh_src, sh_sampler, uv, 0.0).a;
+    if (SH.extra.y > 0.5) {
+        var m = textureSampleLevel(sh_mask, sh_sampler, uv, 0.0).r;
+        if (SH.extra.z > 0.5) { m = 1.0 - m; }
+        a = a * clamp(m, 0.0, 1.0);
+    }
+    return a;
+}
+
+fn sh_soft(p: vec2<f32>, r0: vec4<f32>, r1: vec4<f32>, r2: vec4<f32>, radius: f32) -> f32 {
+    let s = r0.xy * p.x + r1.xy * p.y + r2.xy;
+    var a = sh_alpha(s);
+    for (var i = 0u; i < TAPS; i++) { a += sh_alpha(s + disk(i) * radius); }
+    return a / f32(TAPS + 1u);
+}
+
+@compute @workgroup_size(8, 8)
+fn shadow(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let dims = textureDimensions(sh_dst);
+    if (gid.x >= dims.x || gid.y >= dims.y) { return; }
+    let px = vec2<i32>(gid.xy);
+    let back = textureLoad(sh_backdrop, px, 0);
+    let p = vec2<f32>(gid.xy) + vec2<f32>(0.5);
+    var k = 0.0;
+    if (SH.color.w > 0.0) { k = max(k, SH.color.w * sh_soft(p, SH.cast0, SH.cast1, SH.cast2, SH.size.z)); }
+    if (SH.extra.x > 0.0) { k = max(k, SH.extra.x * sh_soft(p, SH.contact0, SH.contact1, SH.contact2, SH.size.w)); }
+    let tint = mix(vec3<f32>(1.0), SH.color.rgb, clamp(k, 0.0, 1.0));
+    textureStore(sh_dst, px, vec4<f32>(back.rgb * tint, back.a));
 }

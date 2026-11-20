@@ -76,7 +76,7 @@ impl App {
         let t = self.time;
         let mut readers: HashMap<MediaId, VideoReader> = HashMap::new();
         let mut stills: HashMap<MediaId, Frame> = HashMap::new();
-        render::composite(&mut self.viewer.gpu, &self.doc, t, &self.paint, &self.masks, |m, mt| {
+        render::composite(&mut self.viewer.gpu, &self.doc, t, &self.paint, &self.masks, &self.normals, |m, mt| {
             fetch_full(&mut readers, &mut stills, m, mt)
         });
         let (w, h, px) = self.viewer.gpu.read_back()?;
@@ -129,7 +129,7 @@ impl App {
             while job.frame < job.total && Instant::now() < deadline {
                 let t = self.doc.canvas.frame_time(job.frame);
                 let (readers, stills) = (&mut job.readers, &mut job.stills);
-                render::composite(&mut self.viewer.gpu, &self.doc, t, &self.paint, &self.masks, |m, mt| {
+                render::composite(&mut self.viewer.gpu, &self.doc, t, &self.paint, &self.masks, &self.normals, |m, mt| {
                     fetch_full(readers, stills, m, mt)
                 });
                 let (w, h, px) = self.viewer.gpu.read_back()?;

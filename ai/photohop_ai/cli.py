@@ -43,6 +43,13 @@ def cmd_segment(args) -> dict:
     return {"output": args.output, "instances": n, "coverage": cover}
 
 
+def cmd_normals(args) -> dict:
+    from .normals import normals
+
+    mean_z = normals(args.input, args.output, device=_device(), size=args.size)
+    return {"output": args.output, "mean_z": mean_z}
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="photohop-ai")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -57,10 +64,15 @@ def main(argv=None) -> int:
     s.add_argument("output")
     s.add_argument("--prompt", required=True)
     s.add_argument("--threshold", type=float, default=0.4)
+    nrm = sub.add_parser("normals", help="surface normals of people (Sapiens2) -> RGB normal map PNG")
+    nrm.add_argument("input")
+    nrm.add_argument("output")
+    nrm.add_argument("--size", default="1b", choices=["0.4b", "0.8b", "1b"])
     args = p.parse_args(argv)
     t0 = time.time()
     try:
-        result = {"info": cmd_info, "matte": cmd_matte, "segment": cmd_segment}[args.cmd](args)
+        cmds = {"info": cmd_info, "matte": cmd_matte, "segment": cmd_segment, "normals": cmd_normals}
+        result = cmds[args.cmd](args)
         result.update(ok=True, seconds=round(time.time() - t0, 2))
     except Exception as e:  # noqa: BLE001 - report every failure as JSON for the app
         result = {"ok": False, "error": f"{type(e).__name__}: {e}"}

@@ -25,6 +25,9 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
   statistical transfer), with an amount slider
 - Layer masks: paint to hide (brush) or reveal (eraser), invert, toggle
 - Scopes (S): waveform, RGB parade, vectorscope with skin-tone line, histogram
+- **Integration**: light wrap, blur/sharpen, film grain, cast + contact shadow (auto-detects the feet),
+  and **relighting** from AI-estimated normals with a drag-the-sun light pad, rim light and soft
+  skin falloff — shading changes only, never repainted pixels
 - Curves (master / R / G / B, GIMP spline) and an HSL qualifier to select a colour range and shift its
   hue, saturation or brightness (with a matte view to check the selection)
 - Undo/redo for everything, including brush strokes
@@ -76,8 +79,8 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
 1. **Editing shell** — layers, timeline, keyframes, transforms, crop, paint, export *(done)*
 2. **Masks & cutouts** — mask painting *(done)*; selections, bezier roto, AI cutout suggestions you can refine
 3. **Colour** — wheels, grade, non-AI matching, curves, HSL qualifier, scopes *(done)*; colour management (OCIO/Log/RAW)
-4. **Integration** — relighting (shading only, never repainting you), cast/contact shadows, light wrap,
-   grain / blur / lens matching, haze and bloom
+4. **Integration** — relighting, cast/contact shadows, light wrap, grain, blur/sharpen *(done)*;
+   automatic grain/sharpness matching, haze and bloom
 5. **Tracking** — point and planar trackers, stabiliser, 3D camera solve
 6. **Blender round-trip** — export camera, cutout and body motion to Blender, bring renders back
 7. **AI auto-colour** and an optional "game-ify" look

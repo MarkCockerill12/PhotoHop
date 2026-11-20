@@ -4,6 +4,7 @@
 
 use crate::anim::Animated;
 use crate::blend::BlendMode;
+use crate::fx::LayerFx;
 use crate::grade::{Grade, LayerMask};
 use glam::{Affine2, Vec2};
 use serde::{Deserialize, Serialize};
@@ -143,6 +144,11 @@ pub struct Layer {
     pub grade: Grade,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mask: Option<LayerMask>,
+    #[serde(default)]
+    pub fx: LayerFx,
+    /// The layer has a baked normal map (AI estimate) in the project assets, used by relighting.
+    #[serde(default)]
+    pub has_normals: bool,
 }
 
 impl Layer {
@@ -160,6 +166,8 @@ impl Layer {
             length: None,
             grade: Grade::default(),
             mask: None,
+            fx: LayerFx::default(),
+            has_normals: false,
         }
     }
 
@@ -185,6 +193,7 @@ impl Layer {
             .chain(tr.rotation.key_times())
             .chain(self.opacity.key_times())
             .chain(self.grade.key_times())
+            .chain(self.fx.key_times())
             .collect();
         v.sort_by(f64::total_cmp);
         v.dedup_by(|a, b| (*a - *b).abs() < crate::anim::KEY_EPS);

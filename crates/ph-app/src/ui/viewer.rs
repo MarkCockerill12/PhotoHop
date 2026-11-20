@@ -89,7 +89,7 @@ pub fn viewer(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     // Composite at the playhead (non-blocking: videos show the nearest decoded frame).
     let t = app.time;
     let media = &mut app.media;
-    render::composite(&mut app.viewer.gpu, &app.doc, t, &app.paint, &app.masks, |m, mt| media.frame(m, mt));
+    render::composite(&mut app.viewer.gpu, &app.doc, t, &app.paint, &app.masks, &app.normals, |m, mt| media.frame(m, mt));
     app.viewer.sync_texture(rs);
     if app.scopes.show {
         if let Some(img) = app.viewer.gpu.take_scope() {
