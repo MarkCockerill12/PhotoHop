@@ -24,6 +24,7 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
 - **Match colour** to another layer without AI (colour cast only, brightness & contrast only, or full
   statistical transfer), with an amount slider
 - Layer masks: paint to hide (brush) or reveal (eraser), invert, toggle
+- Selections straight into masks (M): rectangle, ellipse, lasso, magic wand; Shift adds, Alt subtracts, feather
 - Scopes (S): waveform, RGB parade, vectorscope with skin-tone line, histogram
 - **Integration**: light wrap, blur/sharpen, film grain, cast + contact shadow (auto-detects the feet),
   and **relighting** from AI-estimated normals with a drag-the-sun light pad, rim light and soft
@@ -72,6 +73,7 @@ cargo run --release -p photohop -- photo.jpg  # open a photo, video or .phop pro
 | Key | Action | Key | Action |
 |---|---|---|---|
 | V | Move tool | Space | Play / pause |
+| M | Select → mask (rect / ellipse / lasso / wand) | | |
 | C | Crop tool (Enter applies, Esc cancels) | ← / → | Previous / next frame |
 | B / E | Brush / eraser | Home | Go to start |
 | H | Hand (pan) — or middle-drag / Space-drag | K | Toggle keyframes on the selected layer |
@@ -85,7 +87,7 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
 ## Roadmap
 
 1. **Editing shell** — layers, timeline, keyframes, transforms, crop, paint, export *(done)*
-2. **Masks & cutouts** — mask painting *(done)*; selections, bezier roto, AI cutout suggestions you can refine
+2. **Masks & cutouts** — mask painting, selections, AI cutouts (photo + video) *(done)*; bezier roto
 3. **Colour** — wheels, grade, non-AI matching, curves, HSL qualifier, scopes *(done)*; colour management (OCIO/Log/RAW)
 4. **Integration** — relighting, cast/contact shadows, light wrap, grain, blur/sharpen *(done)*;
    automatic grain/sharpness and light matching, haze *(done)*; bloom

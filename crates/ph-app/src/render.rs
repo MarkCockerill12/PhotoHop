@@ -19,6 +19,7 @@ pub enum DragMode {
     Crop,
     Paint,
     AiBox,
+    Select,
 }
 
 /// State captured when a viewer drag starts (values are absolute, so drags never drift).
@@ -37,6 +38,8 @@ pub struct Drag {
 pub struct Viewer {
     pub gpu: Compositor,
     pub drag: Option<Drag>,
+    /// Selection being drawn (canvas pixels): rect/ellipse corners or lasso points.
+    pub select_pts: Vec<Vec2>,
     /// AI region box being drawn (canvas pixels), see `AiState::picking_box`.
     pub ai_box: Option<(Vec2, Vec2)>,
     /// Pending crop rectangle in canvas pixels (two corners).
@@ -57,6 +60,7 @@ impl Viewer {
         Self {
             gpu: Compositor::new(device, queue),
             drag: None,
+            select_pts: Vec::new(),
             ai_box: None,
             crop: None,
             tex_id: None,

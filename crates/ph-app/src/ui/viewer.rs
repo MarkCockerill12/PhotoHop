@@ -141,6 +141,14 @@ fn handle_tools(app: &mut App, ui: &egui::Ui, resp: &egui::Response) {
     if resp.clicked() && let Some(p) = pointer {
         match app.tool {
             Tool::Move => app.selected = pick_layer(app, p),
+            Tool::Select if app.select_shape == crate::selection::SelectShape::Wand => {
+                use crate::selection::Combine;
+                let mode = if shift { Combine::Add } else if ui.input(|i| i.modifiers.alt) { Combine::Subtract } else { Combine::Replace };
+                let seed = app.viewer.screen_to_canvas(p);
+                if let Err(e) = app.apply_selection(None, Some(seed), mode) {
+                    app.status = format!("Magic wand: {e:#}");
+                }
+            }
             Tool::Brush | Tool::Eraser => {
                 if let Some(d) = start_drag(app, p) {
                     update_drag(app, d, to_vec(p), shift);
@@ -185,6 +193,13 @@ fn start_drag(app: &mut App, p: egui::Pos2) -> Option<Drag> {
         Tool::Crop => {
             app.viewer.crop = Some((start, start));
             Some(base(DragMode::Crop, None))
+        }
+        Tool::Select => {
+            if app.select_shape == crate::selection::SelectShape::Wand {
+                return None;
+            }
+            app.viewer.select_pts = vec![start, start];
+            Some(base(DragMode::Select, app.selected))
         }
         Tool::Move => {
             if let Some(id) = app.selected.filter(|id| app.doc.layer(*id).is_some_and(|l| !l.locked))
@@ -237,6 +252,16 @@ fn update_drag(app: &mut App, d: Drag, screen: Vec2, shift: bool) {
         DragMode::AiBox => {
             if let Some((a, _)) = app.viewer.ai_box {
                 app.viewer.ai_box = Some((a, cur));
+            }
+        }
+        DragMode::Select => {
+            let pts = &mut app.viewer.select_pts;
+            if app.select_shape == crate::selection::SelectShape::Lasso {
+                if pts.last().is_none_or(|l| l.distance(cur) > 1.5 / app.viewer.zoom) {
+                    pts.push(cur);
+                }
+            } else if pts.len() >= 2 {
+                pts[1] = cur;
             }
         }
         DragMode::Move => {
@@ -310,6 +335,29 @@ fn finish_drag(app: &mut App) {
             }
         }
         DragMode::Crop => {}
+        DragMode::Select => {
+            use crate::selection::{Combine, SelectShape};
+            let pts = std::mem::take(&mut app.viewer.select_pts);
+            let (shift, alt) = app.egui_ctx.input(|i| (i.modifiers.shift, i.modifiers.alt));
+            let mode = if shift { Combine::Add } else if alt { Combine::Subtract } else { Combine::Replace };
+            let poly: Vec<Vec2> = match app.select_shape {
+                SelectShape::Rect if pts.len() >= 2 => {
+                    let (a, b) = (pts[0], pts[1]);
+                    vec![a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)]
+                }
+                SelectShape::Ellipse if pts.len() >= 2 => {
+                    let (c, r) = ((pts[0] + pts[1]) * 0.5, (pts[1] - pts[0]) * 0.5);
+                    (0..96).map(|i| { let t = i as f32 / 96.0 * std::f32::consts::TAU; c + Vec2::new(t.cos() * r.x, t.sin() * r.y) }).collect()
+                }
+                SelectShape::Lasso => pts,
+                _ => Vec::new(),
+            };
+            if poly.len() >= 3
+                && let Err(e) = app.apply_selection(Some(&poly), None, mode)
+            {
+                app.status = format!("Selection: {e:#}");
+            }
+        }
         DragMode::AiBox => {
             app.ai.picking_box = false;
             if let (Some((a, b)), Some(id)) = (app.viewer.ai_box.take(), d.layer)
@@ -357,6 +405,22 @@ fn draw_overlays(app: &App, painter: &egui::Painter, resp: &egui::Response) {
         let rh = rotate_handle(&c);
         painter.line_segment([top_mid, rh], egui::Stroke::new(1.0, accent));
         painter.circle(rh, HANDLE_R, egui::Color32::WHITE, egui::Stroke::new(1.0, accent));
+    }
+    if app.viewer.select_pts.len() >= 2 {
+        let pts: Vec<egui::Pos2> = app.viewer.select_pts.iter().map(|p| app.viewer.canvas_to_screen(*p)).collect();
+        let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 196, 64));
+        match app.select_shape {
+            crate::selection::SelectShape::Lasso => {
+                painter.add(egui::Shape::line(pts, stroke));
+            }
+            crate::selection::SelectShape::Ellipse => {
+                let r = egui::Rect::from_two_pos(pts[0], pts[1]);
+                painter.add(egui::Shape::ellipse_stroke(r.center(), r.size() * 0.5, stroke));
+            }
+            _ => {
+                painter.rect_stroke(egui::Rect::from_two_pos(pts[0], pts[1]), 0.0, stroke, egui::StrokeKind::Middle);
+            }
+        }
     }
     if let Some((a, b)) = app.viewer.ai_box {
         let r = egui::Rect::from_two_pos(app.viewer.canvas_to_screen(a), app.viewer.canvas_to_screen(b));

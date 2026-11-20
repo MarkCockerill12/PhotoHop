@@ -13,6 +13,7 @@ mod media_cache;
 mod paint;
 mod render;
 mod scopes;
+mod selection;
 mod track;
 mod ui;
 

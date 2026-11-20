@@ -96,6 +96,7 @@ fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     }
     for (key, tool) in [
         (egui::Key::V, Tool::Move),
+        (egui::Key::M, Tool::Select),
         (egui::Key::C, Tool::Crop),
         (egui::Key::B, Tool::Brush),
         (egui::Key::E, Tool::Eraser),

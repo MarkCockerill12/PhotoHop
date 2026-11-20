@@ -14,6 +14,7 @@ use std::time::Instant;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tool {
     Move,
+    Select,
     Crop,
     Brush,
     Eraser,
@@ -21,11 +22,12 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 5] = [Tool::Move, Tool::Crop, Tool::Brush, Tool::Eraser, Tool::Hand];
+    pub const ALL: [Tool; 6] = [Tool::Move, Tool::Select, Tool::Crop, Tool::Brush, Tool::Eraser, Tool::Hand];
 
     pub fn label(self) -> &'static str {
         match self {
             Tool::Move => "Move (V)",
+            Tool::Select => "Select → mask (M)",
             Tool::Crop => "Crop (C)",
             Tool::Brush => "Brush (B)",
             Tool::Eraser => "Eraser (E)",
@@ -37,6 +39,7 @@ impl Tool {
         use egui_material_icons::icons::*;
         match self {
             Tool::Move => ICON_OPEN_WITH,
+            Tool::Select => ICON_SELECT_ALL,
             Tool::Crop => ICON_CROP,
             Tool::Brush => ICON_BRUSH,
             Tool::Eraser => ICON_INK_ERASER,
@@ -71,6 +74,9 @@ pub struct App {
     pub match_mode: crate::matching::MatchMode,
     pub match_reference: Option<LayerId>,
     pub curve_channel: crate::ui::CurveChannel,
+    pub select_shape: crate::selection::SelectShape,
+    pub wand_threshold: f32,
+    pub select_feather: f32,
     /// Index of the curve point being dragged.
     pub curve_drag: Option<usize>,
     pub pixel_undo: Vec<PixelUndo>,
@@ -123,6 +129,9 @@ impl App {
             match_mode: crate::matching::MatchMode::ColourCast,
             match_reference: None,
             curve_channel: Default::default(),
+            select_shape: Default::default(),
+            wand_threshold: 0.12,
+            select_feather: 0.0,
             curve_drag: None,
             pixel_undo: Vec::new(),
             pixel_redo: Vec::new(),
@@ -424,6 +433,48 @@ impl App {
             }
         });
         self.edit_mask = false;
+    }
+
+    /// Apply a selection (polygon in canvas pixels, or a magic-wand seed) to the selected layer's mask.
+    pub fn apply_selection(&mut self, poly: Option<&[glam::Vec2]>, seed: Option<glam::Vec2>, mode: crate::selection::Combine) -> Result<()> {
+        use crate::selection as sel;
+        let id = self.selected.context("select a layer first")?;
+        let layer = self.doc.layer(id).context("layer missing")?.clone();
+        if layer.mask.as_ref().is_some_and(|m| m.video.is_some()) {
+            anyhow::bail!("this layer's mask is an AI video track — delete it first to paint selections");
+        }
+        if layer.mask.is_none() {
+            self.add_mask();
+            // A brand-new mask starts empty when replacing, so the selection becomes the mask.
+            if mode == sel::Combine::Replace
+                && let Some(r) = self.masks.get_mut(&id)
+            {
+                r.data.fill([0.0, 0.0, 0.0, 1.0]);
+            }
+        }
+        let size = self.doc.layer_source_size(&layer);
+        let inv = self.doc.layer_matrix(&layer, self.time).inverse();
+        let raster = self.masks.get_mut(&id).context("mask raster missing")?;
+        let (w, h) = (raster.width, raster.height);
+        let k = glam::Vec2::new(w as f32 / size.x, h as f32 / size.y);
+        let to_mask = |p: glam::Vec2| inv.transform_point2(p) * k;
+        let mut cov = if let Some(seed) = seed {
+            let frame = self.layer_frame(id).context("no pixels to select from")?;
+            sel::wand(&frame, w, h, to_mask(seed), self.wand_threshold)
+        } else {
+            let pts: Vec<glam::Vec2> = poly.unwrap_or(&[]).iter().map(|p| to_mask(*p)).collect();
+            sel::polygon(w, h, &pts)
+        };
+        sel::feather(&mut cov, w, h, self.select_feather * k.x);
+        let raster = self.masks.get_mut(&id).context("mask raster missing")?;
+        let before = crate::paint::Patch { x: 0, y: 0, w, h, pixels: raster.data.clone() };
+        sel::apply(&mut raster.data, &cov, mode);
+        raster.revision += 1;
+        self.pixel_undo.push(PixelUndo::Stroke { layer: id, mask: true, patch: before });
+        self.pixel_redo.clear();
+        self.dirty = true;
+        self.status = "Selection applied to the layer mask (Shift adds, Alt subtracts).".into();
+        Ok(())
     }
 
     /// Current frame of a layer's source (preview resolution for video).

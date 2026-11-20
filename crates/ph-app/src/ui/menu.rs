@@ -185,6 +185,19 @@ pub fn toolbar(app: &mut App, ui: &mut egui::Ui) {
             Tool::Crop => {
                 ui.label("Drag on the canvas to choose the crop, then press Enter (Esc cancels).");
             }
+            Tool::Select => {
+                for s in crate::selection::SelectShape::ALL {
+                    ui.selectable_value(&mut app.select_shape, s, s.label());
+                }
+                ui.separator();
+                if app.select_shape == crate::selection::SelectShape::Wand {
+                    ui.label("Tolerance");
+                    ui.add(egui::Slider::new(&mut app.wand_threshold, 0.01..=0.6));
+                }
+                ui.label("Feather");
+                ui.add(egui::DragValue::new(&mut app.select_feather).range(0.0..=200.0).suffix(" px"));
+                ui.label(egui::RichText::new("Selection becomes the layer mask · Shift add · Alt subtract").weak());
+            }
             Tool::Move => {
                 ui.label("Drag to move · corner handles scale (Shift = free) · top handle rotates.");
             }
