@@ -7,7 +7,8 @@ use ph_media::VideoCodec;
 const MEDIA_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "tif", "tiff", "exr", "mp4", "mov", "mkv", "webm", "avi", "m4v"];
 
 pub fn import_dialog(app: &mut App) {
-    if let Some(paths) = rfd::FileDialog::new().add_filter("Images & video", MEDIA_EXTS).pick_files() {
+    let scripted = app.dialog_answers.pop_front().map(|p| vec![p]);
+    if let Some(paths) = scripted.or_else(|| rfd::FileDialog::new().add_filter("Images & video", MEDIA_EXTS).pick_files()) {
         for p in paths {
             if let Err(e) = app.import(&p) {
                 app.status = format!("Import failed: {e:#}");
@@ -17,7 +18,7 @@ pub fn import_dialog(app: &mut App) {
 }
 
 pub fn open_dialog(app: &mut App) {
-    if let Some(p) = rfd::FileDialog::new().add_filter("PhotoHop project", &["phop"]).pick_file()
+    if let Some(p) = app.dialog(|| rfd::FileDialog::new().add_filter("PhotoHop project", &["phop"]).pick_file())
         && let Err(e) = app.open(&p)
     {
         app.status = format!("Open failed: {e:#}");
@@ -27,10 +28,10 @@ pub fn open_dialog(app: &mut App) {
 pub fn save(app: &mut App, save_as: bool) {
     let path = match (&app.project_path, save_as) {
         (Some(p), false) => Some(p.clone()),
-        _ => rfd::FileDialog::new()
-            .add_filter("PhotoHop project", &["phop"])
-            .set_file_name(format!("{}.phop", app.doc.name))
-            .save_file(),
+        _ => {
+            let name = format!("{}.phop", app.doc.name);
+            app.dialog(|| rfd::FileDialog::new().add_filter("PhotoHop project", &["phop"]).set_file_name(name).save_file())
+        }
     };
     if let Some(p) = path
         && let Err(e) = app.save_to(&p)
@@ -72,13 +73,13 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             }
             ui.separator();
             if ui.button("Export to Blender…").on_hover_text("Writes a bundle for the PhotoHop Bridge add-on (selected layer = you)").clicked()
-                && let Some(dir) = rfd::FileDialog::new().set_title("Choose an empty folder for the Blender bundle").pick_folder()
+                && let Some(dir) = app.dialog(|| rfd::FileDialog::new().set_title("Choose an empty folder for the Blender bundle").pick_folder())
                 && let Err(e) = app.start_blender_export(&dir)
             {
                 app.status = format!("Blender export failed: {e:#}");
             }
             if ui.button("Import Blender render…").clicked()
-                && let Some(dir) = rfd::FileDialog::new().set_title("Pick the Blender bundle folder").pick_folder()
+                && let Some(dir) = app.dialog(|| rfd::FileDialog::new().set_title("Pick the Blender bundle folder").pick_folder())
                 && let Err(e) = app.import_blender_render(&dir)
             {
                 app.status = format!("Import failed: {e:#}");
@@ -284,7 +285,8 @@ pub fn export_window(app: &mut App, ctx: &egui::Context) {
         });
         if ui.button("Export image…").clicked() {
             let ext = app.export.image_format.extension();
-            if let Some(p) = rfd::FileDialog::new().add_filter(ext, &[ext]).set_file_name(format!("{}.{ext}", app.doc.name)).save_file()
+            let name = format!("{}.{ext}", app.doc.name);
+            if let Some(p) = app.dialog(|| rfd::FileDialog::new().add_filter(ext, &[ext]).set_file_name(name).save_file())
                 && let Err(e) = app.export_image(p)
             {
                 app.status = format!("Export failed: {e:#}");
@@ -303,7 +305,8 @@ pub fn export_window(app: &mut App, ctx: &egui::Context) {
         let busy = app.export.job.is_some();
         if ui.add_enabled(!busy, egui::Button::new("Export video…")).clicked() {
             let ext = app.export.codec.extension();
-            if let Some(p) = rfd::FileDialog::new().add_filter(ext, &[ext]).set_file_name(format!("{}.{ext}", app.doc.name)).save_file()
+            let name = format!("{}.{ext}", app.doc.name);
+            if let Some(p) = app.dialog(|| rfd::FileDialog::new().add_filter(ext, &[ext]).set_file_name(name).save_file())
                 && let Err(e) = app.start_video_export(p)
             {
                 app.status = format!("Export failed: {e:#}");

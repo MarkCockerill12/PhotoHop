@@ -14,6 +14,7 @@ mod paint;
 mod render;
 mod roto;
 mod scopes;
+mod script;
 mod selection;
 mod track;
 mod ui;
@@ -22,6 +23,7 @@ use app::App;
 
 struct PhotoHop {
     app: App,
+    script: Option<script::Script>,
 }
 
 impl eframe::App for PhotoHop {
@@ -32,6 +34,12 @@ impl eframe::App for PhotoHop {
         };
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(self.app.title()));
         ui::draw(&mut self.app, ui, &rs);
+    }
+
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if let Some(s) = &mut self.script {
+            s.feed(&mut self.app, ctx, raw_input);
+        }
     }
 }
 
@@ -63,7 +71,7 @@ fn main() -> eframe::Result {
                     app.status = format!("Could not open {}: {e:#}", path.display());
                 }
             }
-            Ok(Box::new(PhotoHop { app }))
+            Ok(Box::new(PhotoHop { app, script: script::Script::from_env() }))
         }),
     )
 }

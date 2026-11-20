@@ -152,6 +152,9 @@ pub struct Layer {
     /// Bezier roto shapes masking this layer (combined with the painted / AI mask).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roto: Vec<crate::roto::RotoShape>,
+    /// Set on an AI "remove object" patch: the layer whose object it paints out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_of: Option<LayerId>,
 }
 
 impl Layer {
@@ -172,6 +175,7 @@ impl Layer {
             fx: LayerFx::default(),
             has_normals: false,
             roto: Vec::new(),
+            patch_of: None,
         }
     }
 

@@ -80,6 +80,8 @@ pub struct App {
     pub select_shape: crate::selection::SelectShape,
     /// Roto shape being edited (index into the selected layer's shapes).
     pub roto_edit: Option<usize>,
+    /// Pre-answered file dialogs (UI automation, see `script.rs`).
+    pub dialog_answers: std::collections::VecDeque<PathBuf>,
     pub wand_threshold: f32,
     pub select_feather: f32,
     /// Index of the curve point being dragged.
@@ -136,6 +138,7 @@ impl App {
             curve_channel: Default::default(),
             select_shape: Default::default(),
             roto_edit: None,
+            dialog_answers: Default::default(),
             wand_threshold: 0.12,
             select_feather: 0.0,
             curve_drag: None,
@@ -310,6 +313,15 @@ impl App {
 
     /// Import a still or video as a new layer on top. The first import sizes the canvas
     /// (and, for video, the timeline) to match.
+    pub fn export_running(&self) -> bool {
+        self.export.job.is_some()
+    }
+
+    /// A native file dialog, unless UI automation pre-answered it.
+    pub fn dialog(&mut self, show: impl FnOnce() -> Option<PathBuf>) -> Option<PathBuf> {
+        self.dialog_answers.pop_front().or_else(show)
+    }
+
     pub fn import(&mut self, path: &Path) -> Result<()> {
         let first = self.doc.layers.is_empty();
         let media = if ph_media::video::is_video_path(path) {

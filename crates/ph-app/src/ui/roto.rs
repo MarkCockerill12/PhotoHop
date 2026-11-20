@@ -173,7 +173,7 @@ fn close(app: &mut App, id: LayerId, idx: usize) {
             s.closed = true;
         }
     });
-    app.status = "Shape closed: drag points to adjust; key the shape (◆) to animate it.".into();
+    app.status = "Shape closed: drag points to adjust; key the shape (diamond button) to animate it.".into();
 }
 
 /// Enter / Escape / Delete while the Roto tool is active. Returns true when a key was used.
@@ -274,7 +274,7 @@ pub fn section(app: &mut App, ui: &mut egui::Ui, layer: &ph_core::Layer) {
     let id = layer.id;
     let t = app.time;
     egui::CollapsingHeader::new(format!("Roto shapes ({})", layer.roto.len())).default_open(!layer.roto.is_empty()).show(ui, |ui| {
-        ui.label(egui::RichText::new("Pen (P): click points, drag to curve, click the first point to close. ◆ keys the shape so it can follow you.").weak().small());
+        ui.label(egui::RichText::new("Pen (P): click points, drag to curve, click the first point to close. The diamond button keys the shape so it can follow you.").weak().small());
         if ui.button("New shape").clicked() {
             app.tool = crate::app::Tool::Roto;
             app.roto_edit = None;
@@ -305,7 +305,7 @@ pub fn section(app: &mut App, ui: &mut egui::Ui, layer: &ph_core::Layer) {
                     app.edit("Invert roto shape", |d| d.layer_mut(id).and_then(|l| l.roto.get_mut(i)).map_or((), |s| s.invert = inv));
                 }
                 let keyed = s.path.key_index_at(t).is_some();
-                let key_txt = egui::RichText::new("◆").color(if keyed { egui::Color32::from_rgb(255, 196, 64) } else { egui::Color32::GRAY });
+                let key_txt = egui_material_icons::icons::ICON_DIAMOND.rich_text().color(if keyed { egui::Color32::from_rgb(255, 196, 64) } else { egui::Color32::GRAY });
                 if ui.button(key_txt).on_hover_text("Keyframe the shape here").clicked() {
                     app.edit("Key roto shape", |d| d.layer_mut(id).and_then(|l| l.roto.get_mut(i)).map_or((), |s| s.path.toggle_key(t)));
                 }

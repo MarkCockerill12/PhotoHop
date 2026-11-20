@@ -143,7 +143,7 @@ impl App {
             return self.start_auto_colour(id, &dir);
         }
         let layer = self.doc.layer(id).context("layer missing")?;
-        let input = match &layer.content {
+        let mut input = match &layer.content {
             LayerContent::Media { media, .. } if task.is_video() => {
                 let m = self.doc.media(*media).context("media missing")?;
                 if !m.is_video() {
@@ -172,6 +172,15 @@ impl App {
             }
             LayerContent::Solid { .. } => bail!("AI masks need a photo, video or paint layer"),
         };
+        // Removing something from a cut-out layer: the AI needs the scene behind it as context.
+        let mut aux = Vec::new();
+        if matches!(task, AiTask::Remove(_))
+            && let Some(p) = self.remove_context_input(id, &input, &dir)?
+        {
+            input = p;
+            aux.push(input.clone());
+        }
+        let layer = self.doc.layer(id).context("layer missing")?;
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
         let output = match &task {
             AiTask::Normals => dir.join(format!("normals-{}.png", id.0)),
@@ -181,6 +190,8 @@ impl App {
             AiTask::Remove(_) => dir.join(format!("patch-{}-{stamp}.png", id.0)),
             _ => dir.join(format!("mask-{}.png", id.0)),
         };
+        // Never let a stale result from an earlier run be read back as this job's output.
+        let _ = std::fs::remove_file(&output);
         let mut args = vec![String::new(), input.to_string_lossy().into_owned(), output.to_string_lossy().into_owned()];
         match &task {
             AiTask::Matte => args[0] = "matte".into(),
@@ -226,8 +237,49 @@ impl App {
             ctx.request_repaint();
         })?;
         self.status = format!("{} running… (first run downloads the model)", task.label());
-        self.ai.job = Some(AiJob { layer: id, task, output, rx, aux: Vec::new() });
+        self.ai.job = Some(AiJob { layer: id, task, output, rx, aux });
         Ok(())
+    }
+
+    /// For a layer with transparency (cutout PNG or mask) above other layers: the layer composited
+    /// over everything below it, resampled into the layer's own pixel space. `None` = use as is.
+    fn remove_context_input(&mut self, id: LayerId, src: &Path, dir: &Path) -> Result<Option<PathBuf>> {
+        let idx = self.doc.layer_index(id).context("layer missing")?;
+        if idx == 0 {
+            return Ok(None);
+        }
+        let has_mask = self.doc.layers[idx].mask.as_ref().is_some_and(|m| m.enabled);
+        let frame = ph_media::load_image(src)?;
+        let transparent = has_mask || frame.pixels.as_chunks::<4>().0.iter().any(|p| p[3].to_f32() < 0.98);
+        if !transparent {
+            return Ok(None);
+        }
+        let upto: Vec<LayerId> = self.doc.layers[..=idx].iter().map(|l| l.id).collect();
+        let comp = self.composite_only(|l| upto.contains(&l), None)?;
+        let layer = &self.doc.layers[idx];
+        let size = self.doc.layer_source_size(layer);
+        let m = layer.transform.matrix(self.time, size);
+        let (w, h) = (size.x.round().max(1.0) as u32, size.y.round().max(1.0) as u32);
+        let (cw, ch) = (comp.width as i64, comp.height as i64);
+        let px = |x: i64, y: i64, c: usize| -> f32 { comp.pixels[((y.clamp(0, ch - 1) * cw + x.clamp(0, cw - 1)) * 4) as usize + c].to_f32() };
+        let mut out = image::RgbaImage::new(w, h);
+        for (x, y, o) in out.enumerate_pixels_mut() {
+            let p = m.transform_point2(glam::Vec2::new(x as f32 + 0.5, y as f32 + 0.5)) - 0.5;
+            let (x0, y0) = (p.x.floor(), p.y.floor());
+            let (fx, fy) = (p.x - x0, p.y - y0);
+            let (x0, y0) = (x0 as i64, y0 as i64);
+            let s: [f32; 4] = std::array::from_fn(|c| {
+                let top = px(x0, y0, c) * (1.0 - fx) + px(x0 + 1, y0, c) * fx;
+                let bot = px(x0, y0 + 1, c) * (1.0 - fx) + px(x0 + 1, y0 + 1, c) * fx;
+                top * (1.0 - fy) + bot * fy
+            });
+            let a = s[3].clamp(0.0, 1.0);
+            let un = |v: f32| (ph_media::color::linear_to_srgb((v / a.max(1e-4)).max(0.0)).clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+            *o = image::Rgba([un(s[0]), un(s[1]), un(s[2]), (a * 255.0 + 0.5) as u8]);
+        }
+        let path = dir.join("remove_input.png");
+        out.save(&path)?;
+        Ok(Some(path))
     }
 
     fn spawn_job(&mut self, id: LayerId, task: AiTask, output: PathBuf, args: Vec<String>, aux: Vec<PathBuf>) -> Result<()> {
@@ -262,6 +314,7 @@ impl App {
         let mask_img = image::GrayImage::from_raw(subject.width, subject.height, alpha).context("mask image")?;
         let mask = image::DynamicImage::ImageLuma8(mask_img).resize_exact(w, h, image::imageops::FilterType::Triangle).to_luma8();
         let (cp, mp, op) = (dir.join("hz_comp.png"), dir.join("hz_mask.png"), dir.join("hz_out.png"));
+        let _ = std::fs::remove_file(&op);
         comp_rgb.save(&cp)?;
         mask.save(&mp)?;
         let args = vec!["harmonize".into(), cp.to_string_lossy().into_owned(), mp.to_string_lossy().into_owned(), op.to_string_lossy().into_owned()];
@@ -349,6 +402,7 @@ impl App {
                     height: h,
                 };
                 let (mid, src) = (media.id, job.layer);
+                let context = !job.aux.is_empty();
                 let name = format!("Removed: {what}");
                 self.edit(&job.task.label(), |d| {
                     let Some(idx) = d.layer_index(src) else { return };
@@ -356,9 +410,13 @@ impl App {
                     d.media.push(media);
                     let mut l = ph_core::Layer::new(name, ph_core::LayerContent::Media { media: mid, trim_in: 0.0 }, &d.canvas);
                     l.transform = base.transform.clone();
+                    l.patch_of = Some(src);
                     l.start = base.start;
                     l.length = base.length;
-                    l.grade = base.grade.clone();
+                    // With scene context the patch already looks like the composite: don't regrade it.
+                    if !context {
+                        l.grade = base.grade.clone();
+                    }
                     d.layers.insert(idx + 1, l);
                 });
                 return Ok(format!(

@@ -46,7 +46,45 @@ fn only(doc: &Project, keep: impl Fn(LayerId) -> bool) -> Project {
     d
 }
 
+/// AI "remove object" patches of `subject` (older projects: a "Removed: …" layer right above it).
+fn patches_of(doc: &Project, subject: LayerId) -> Vec<LayerId> {
+    let idx = doc.layer_index(subject);
+    doc.layers
+        .iter()
+        .enumerate()
+        .filter(|(i, l)| {
+            l.visible && (l.patch_of == Some(subject) || (l.patch_of.is_none() && l.name.starts_with("Removed: ") && idx.is_some_and(|s| *i == s + 1)))
+        })
+        .map(|(_, l)| l.id)
+        .collect()
+}
+
 impl App {
+    /// The removed object must not hide Blender props: take the patches' area out of the subject.
+    fn cut_removed_objects(
+        &mut self,
+        subject: LayerId,
+        t: f64,
+        px: &mut [half::f16],
+        readers: &mut HashMap<ph_core::MediaId, ph_media::VideoReader>,
+        stills: &mut HashMap<ph_core::MediaId, Frame>,
+    ) -> Result<()> {
+        let patches = patches_of(&self.doc, subject);
+        if patches.is_empty() {
+            return Ok(());
+        }
+        let doc = only(&self.doc, |l| patches.contains(&l));
+        render::composite(&mut self.viewer.gpu, &doc, t, &self.paint, &self.masks, &self.normals, |m, mt| fetch_full(readers, stills, m, mt));
+        let (_, _, cut) = self.viewer.gpu.read_back()?;
+        for (p, c) in px.as_chunks_mut::<4>().0.iter_mut().zip(cut.as_chunks::<4>().0) {
+            let keep = 1.0 - c[3].to_f32().clamp(0.0, 1.0);
+            for v in p.iter_mut() {
+                *v = half::f16::from_f32(v.to_f32() * keep);
+            }
+        }
+        Ok(())
+    }
+
     /// Start writing a Blender bundle for the selected layer into `dir`.
     pub fn start_blender_export(&mut self, dir: &Path) -> Result<()> {
         let id = self.selected.context("select the layer that is you (the subject) first")?;
@@ -119,7 +157,10 @@ impl App {
                     render::composite(&mut self.viewer.gpu, &doc, t, &self.paint, &self.masks, &self.normals, |m, mt| {
                         fetch_full(readers, stills, m, mt)
                     });
-                    let (w, h, px) = self.viewer.gpu.read_back()?;
+                    let (w, h, mut px) = self.viewer.gpu.read_back()?;
+                    if keep_subject {
+                        self.cut_removed_objects(job.subject, t, &mut px, &mut job.readers, &mut job.stills)?;
+                    }
                     ph_media::save_frame(&Frame::new(w, h, px), &job.dir.join(part).join(format!("{part}_{n:04}.png")), false)?;
                 }
                 job.frame += 1;
