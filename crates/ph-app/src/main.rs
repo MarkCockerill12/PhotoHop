@@ -1,5 +1,6 @@
 //! PhotoHop — put yourself into any scene, photo or video.
 
+mod ai;
 mod app;
 mod export;
 mod matching;

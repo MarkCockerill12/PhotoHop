@@ -74,7 +74,7 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
 6. **Blender round-trip** — export camera, cutout and body motion to Blender, bring renders back
 7. **AI auto-colour** and an optional "game-ify" look
 
-## AI models (planned, optional)
+## AI (optional)
 
 AI in PhotoHop is optional and limited by design: models may suggest **masks** and **colour / shading
 parameters**, which PhotoHop then applies with its own deterministic maths — they never repaint your
@@ -91,7 +91,10 @@ fits a task can be plugged in; the defaults below were benchmarked on an RTX 407
 | Human normals (relighting) | Sapiens2 1B | MoGe-2 normals |
 | Scene depth | Depth Anything 3 Metric-Large (Apache-2.0) | MoGe-2, DA3 Giant (non-commercial) |
 
-Model setup instructions will be added with the features that use them.
+**Available now** (AI menu): *Cut out subject* (BiRefNet) and *Mask from text* (SAM 3, e.g. "person",
+"toy gun"). Results go straight into the layer's mask, where you can refine them with the brush, and
+they are saved with the project. Setup: see [`ai/README.md`](ai/README.md) — works on CPU (≈40 s per
+photo on a laptop) or much faster on an NVIDIA GPU.
 
 ## Licence
 

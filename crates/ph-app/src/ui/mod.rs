@@ -15,6 +15,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     handle_shortcuts(app, ui.ctx());
     handle_dropped_files(app, ui.ctx());
     app.media.poll();
+    app.poll_ai();
     app.advance_playback();
     if app.export.job.is_some() && app.pump_export() {
         ui.ctx().request_repaint();
@@ -47,6 +48,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     });
     menu::export_window(app, ui.ctx());
     app.scopes.window(ui.ctx());
+    menu::ai_window(app, ui.ctx());
 
     if app.playing {
         ui.ctx().request_repaint();

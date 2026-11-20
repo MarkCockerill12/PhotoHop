@@ -1,0 +1,27 @@
+[project]
+name = "photohop-ai"
+version = "0.1.0"
+description = "Optional AI helpers for PhotoHop (masks only / colour parameters / scoped inpainting)"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pillow",
+    "torch",
+    "torchvision",
+    "transformers>=5.0",
+    "timm",
+    "einops",
+    "kornia",
+    "huggingface_hub",
+]
+
+[project.scripts]
+photohop-ai = "photohop_ai.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120

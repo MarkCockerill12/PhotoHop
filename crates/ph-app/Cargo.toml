@@ -21,6 +21,7 @@ egui_material_icons.workspace = true
 wgpu.workspace = true
 glam.workspace = true
 half.workspace = true
+image.workspace = true
 anyhow.workspace = true
 log.workspace = true
 env_logger.workspace = true

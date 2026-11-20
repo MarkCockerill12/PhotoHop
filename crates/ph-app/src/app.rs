@@ -77,6 +77,8 @@ pub struct App {
     pub viewer: Viewer,
     pub export: ExportState,
     pub scopes: crate::scopes::Scopes,
+    pub ai: crate::ai::AiState,
+    pub egui_ctx: egui::Context,
     pub status: String,
     /// Unsaved changes since last save.
     pub dirty: bool,
@@ -108,6 +110,8 @@ impl App {
             viewer: Viewer::new(device, queue),
             export: ExportState::default(),
             scopes: crate::scopes::Scopes::default(),
+            ai: crate::ai::AiState::default(),
+            egui_ctx: ctx.clone(),
             status: "Import a photo or video to start (File > Import, or drop files onto the window).".into(),
             dirty: false,
             auto_key: false,

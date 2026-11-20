@@ -94,6 +94,22 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
                 app.delete_selected();
             }
         });
+        ui.menu_button("AI", |ui| {
+            let busy = app.ai_running();
+            if ui.add_enabled(!busy, egui::Button::new("Cut out subject (selected layer)")).clicked()
+                && let Err(e) = app.start_ai(crate::ai::AiTask::Matte)
+            {
+                app.status = format!("AI: {e:#}");
+            }
+            if ui.add_enabled(!busy, egui::Button::new("Mask from text…")).clicked() {
+                app.ai.show_dialog = true;
+            }
+            ui.separator();
+            if ui.button("Settings…").clicked() {
+                app.ai.show_dialog = true;
+            }
+            ui.label(egui::RichText::new("AI only makes masks here; your pixels are never repainted.").small().weak());
+        });
         ui.menu_button("View", |ui| {
             ui.checkbox(&mut app.scopes.show, "Scopes  (S)");
             if ui.button("Fit to window  (Ctrl+0)").clicked() {
@@ -157,6 +173,36 @@ pub fn toolbar(app: &mut App, ui: &mut egui::Ui) {
             ui.toggle_value(&mut app.scopes.show, "Scopes").on_hover_text("Waveform, parade, vectorscope, histogram (S)");
         });
     });
+}
+
+pub fn ai_window(app: &mut App, ctx: &egui::Context) {
+    let mut open = app.ai.show_dialog;
+    egui::Window::new("AI masks").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+        ui.label("Describe what to select in the selected layer:");
+        let r = ui.text_edit_singleline(&mut app.ai.prompt);
+        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let busy = app.ai_running();
+        ui.horizontal(|ui| {
+            if (ui.add_enabled(!busy, egui::Button::new("Make mask (SAM 3)")).clicked() || enter) && !busy {
+                let p = app.ai.prompt.trim().to_owned();
+                if let Err(e) = app.start_ai(crate::ai::AiTask::Segment(p)) {
+                    app.status = format!("AI: {e:#}");
+                }
+            }
+            if ui.add_enabled(!busy, egui::Button::new("Auto cutout (BiRefNet)")).clicked()
+                && let Err(e) = app.start_ai(crate::ai::AiTask::Matte)
+            {
+                app.status = format!("AI: {e:#}");
+            }
+            if busy {
+                ui.spinner();
+            }
+        });
+        ui.separator();
+        ui.label("Python with photohop-ai installed (see ai/README.md):");
+        ui.text_edit_singleline(&mut app.ai.python);
+    });
+    app.ai.show_dialog = open;
 }
 
 pub fn export_window(app: &mut App, ctx: &egui::Context) {
