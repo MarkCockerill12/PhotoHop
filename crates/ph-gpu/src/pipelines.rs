@@ -102,6 +102,7 @@ impl Pipelines {
                 },
                 uniform_entry(4),
                 tex_entry(5),
+                uniform_entry(6),
             ],
         });
         let clear_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -169,6 +170,7 @@ impl Pipelines {
         v: &CompositeViews<'_>,
         sampler: &wgpu::Sampler,
         params: &wgpu::Buffer,
+        curves: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("composite"),
@@ -180,6 +182,7 @@ impl Pipelines {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(sampler) },
                 wgpu::BindGroupEntry { binding: 4, resource: params.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(v.mask) },
+                wgpu::BindGroupEntry { binding: 6, resource: curves.as_entire_binding() },
             ],
         })
     }

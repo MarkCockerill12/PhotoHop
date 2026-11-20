@@ -1,6 +1,7 @@
 //! UI layout: menu + toolbar on top, layers left, inspector right, timeline bottom, viewer centre.
 
 mod colour;
+mod curves;
 mod inspector;
 mod layers;
 mod menu;
@@ -8,6 +9,7 @@ mod timeline;
 mod viewer;
 
 use crate::app::{App, Tool};
+pub use curves::CurveChannel;
 
 pub fn draw(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     handle_shortcuts(app, ui.ctx());

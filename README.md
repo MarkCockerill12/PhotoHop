@@ -25,6 +25,8 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
   statistical transfer), with an amount slider
 - Layer masks: paint to hide (brush) or reveal (eraser), invert, toggle
 - Scopes (S): waveform, RGB parade, vectorscope with skin-tone line, histogram
+- Curves (master / R / G / B, GIMP spline) and an HSL qualifier to select a colour range and shift its
+  hue, saturation or brightness (with a matte view to check the selection)
 - Undo/redo for everything, including brush strokes
 - Video preview with background decoding, hardware decode and half/quarter-resolution proxies
 - Export the current frame (PNG 8/16-bit, JPEG, linear EXR) or the timeline as H.264, H.265 or
@@ -65,7 +67,7 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
 
 1. **Editing shell** — layers, timeline, keyframes, transforms, crop, paint, export *(done)*
 2. **Masks & cutouts** — mask painting *(done)*; selections, bezier roto, AI cutout suggestions you can refine
-3. **Colour** — wheels, grade and non-AI matching *(done)*; curves, HSL qualifier, scopes, colour management
+3. **Colour** — wheels, grade, non-AI matching, curves, HSL qualifier, scopes *(done)*; colour management (OCIO/Log/RAW)
 4. **Integration** — relighting (shading only, never repainting you), cast/contact shadows, light wrap,
    grain / blur / lens matching, haze and bloom
 5. **Tracking** — point and planar trackers, stabiliser, 3D camera solve

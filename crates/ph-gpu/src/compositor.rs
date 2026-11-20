@@ -43,6 +43,8 @@ pub struct LayerDraw {
     pub mask: Option<u64>,
     pub mask_invert: bool,
     pub grade: Option<ph_core::GradeSample>,
+    /// Baked curve LUT (`[r, g, b, master]` × 256), when the layer has curves.
+    pub curves: Option<Vec<[f32; 4]>>,
 }
 
 struct GpuSource {
@@ -70,6 +72,7 @@ pub struct Compositor {
     sampler: wgpu::Sampler,
     /// 1×1 white texture bound when a layer has no mask.
     white_view: wgpu::TextureView,
+    identity_lut: wgpu::Buffer,
     sources: HashMap<u64, GpuSource>,
     targets: Option<Targets>,
     /// Bumped whenever the display texture is recreated (the UI must re-register it).
@@ -90,7 +93,9 @@ struct LayerParams {
     has_mask: u32,
     mask_invert: u32,
     has_grade: u32,
-    grade: [[f32; 4]; 8],
+    grade: [[f32; 4]; 11],
+    has_curves: u32,
+    _extra: [u32; 3],
 }
 
 #[repr(C)]
@@ -147,12 +152,16 @@ impl Compositor {
             wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
         );
         let white_view = white.create_view(&Default::default());
+        let pipes = Pipelines::new(device);
+        let identity: Vec<[f32; 4]> = (0..256).map(|i| [i as f32 / 255.0; 4]).collect();
+        let identity_lut = pipes.uniform(device, bytemuck::cast_slice(&identity));
         Self {
             device: device.clone(),
             queue: queue.clone(),
-            pipes: Pipelines::new(device),
+            pipes,
             sampler,
             white_view,
+            identity_lut,
             sources: HashMap::new(),
             targets: None,
             display_generation: 0,
@@ -256,10 +265,13 @@ impl Compositor {
                 has_mask: u32::from(mask_view.is_some()),
                 mask_invert: u32::from(layer.mask_invert),
                 has_grade: u32::from(layer.grade.is_some()),
-                grade: layer.grade.map_or([[0.0; 4]; 8], |g| {
-                    [g.basic, g.lift, g.gamma, g.gain, g.offset, g.tone, g.match_scale, g.match_offset]
+                grade: layer.grade.map_or([[0.0; 4]; 11], |g| {
+                    [g.basic, g.lift, g.gamma, g.gain, g.offset, g.tone, g.match_scale, g.match_offset, g.qual0, g.qual1, g.qual2]
                 }),
+                has_curves: u32::from(layer.curves.is_some()),
+                _extra: [0; 3],
             };
+            let lut_buf = layer.curves.as_ref().map(|lut| self.pipes.uniform(&self.device, bytemuck::cast_slice(lut)));
             let ubuf = self.pipes.uniform(&self.device, bytemuck::bytes_of(&params));
             let next = 1 - cur;
             let views = CompositeViews {
@@ -268,7 +280,8 @@ impl Compositor {
                 src: &src.view,
                 mask: mask_view.unwrap_or(&self.white_view),
             };
-            let bg = self.pipes.composite_bind_group(&self.device, &views, &self.sampler, &ubuf);
+            let lut = lut_buf.as_ref().unwrap_or(&self.identity_lut);
+            let bg = self.pipes.composite_bind_group(&self.device, &views, &self.sampler, &ubuf, lut);
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("layer"), timestamp_writes: None });
             pass.set_pipeline(&self.pipes.composite);
             pass.set_bind_group(0, &bg, &[]);

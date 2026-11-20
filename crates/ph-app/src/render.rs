@@ -158,7 +158,9 @@ pub fn composite(
             }
             _ => None,
         };
-        let grade = (layer.grade.enabled && !layer.grade.is_identity()).then(|| layer.grade.sample(t));
+        let graded = layer.grade.enabled && !layer.grade.is_identity();
+        let grade = graded.then(|| layer.grade.sample(t));
+        let curves = (graded && !layer.grade.curves.is_identity()).then(|| layer.grade.curves.bake());
         draws.push(LayerDraw {
             source: key,
             size,
@@ -168,6 +170,7 @@ pub fn composite(
             mask,
             mask_invert: layer.mask.as_ref().is_some_and(|m| m.invert),
             grade,
+            curves,
         });
     }
     gpu.retain_sources(&keep);

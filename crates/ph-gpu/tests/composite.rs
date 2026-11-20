@@ -25,7 +25,7 @@ fn normal_over_and_multiply() {
     let mut c = Compositor::new(&device, &queue);
     c.upload(1, 0, 4, 4, &solid(4, 4, [1.0, 0.0, 0.0, 0.5]));
     let full = Affine2::from_translation(Vec2::ZERO);
-    let draw = |blend| LayerDraw { source: 1, size: Vec2::new(4.0, 4.0), matrix: full, opacity: 1.0, blend, mask: None, mask_invert: false, grade: None };
+    let draw = |blend| LayerDraw { source: 1, size: Vec2::new(4.0, 4.0), matrix: full, opacity: 1.0, blend, mask: None, mask_invert: false, grade: None, curves: None };
 
     c.render(4, 4, [0.0, 0.0, 1.0, 1.0], &[draw(BlendMode::Normal)]);
     let (_, _, px) = c.read_back().unwrap();
@@ -64,6 +64,7 @@ fn grade_and_mask() {
         mask: None,
         mask_invert: false,
         grade: None,
+        curves: None,
     };
 
     let identity = ph_core::Grade::default().sample(0.0);
@@ -100,4 +101,49 @@ fn scope_readback() {
     let img = img.expect("scope image");
     assert_eq!((img.width, img.height), (16, 8));
     assert_eq!(&img.rgba[..4], &[255, 0, 0, 255]);
+}
+
+#[test]
+fn curves_and_qualifier() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let mut c = Compositor::new(&device, &queue);
+    // Saturated red pixel.
+    c.upload(1, 0, 4, 4, &solid(4, 4, [0.8, 0.05, 0.05, 1.0]));
+    let draw = |grade: ph_core::Grade| LayerDraw {
+        source: 1,
+        size: Vec2::new(4.0, 4.0),
+        matrix: Affine2::IDENTITY,
+        opacity: 1.0,
+        blend: BlendMode::Normal,
+        mask: None,
+        mask_invert: false,
+        curves: (!grade.curves.is_identity()).then(|| grade.curves.bake()),
+        grade: Some(grade.sample(0.0)),
+    };
+    let px0 = |c: &mut Compositor, d: LayerDraw| {
+        c.render(4, 4, [0.0; 4], &[d]);
+        let (_, _, px) = c.read_back().unwrap();
+        [px[0].to_f32(), px[1].to_f32(), px[2].to_f32()]
+    };
+    // Curves: master pulled to 0 -> black.
+    let g = ph_core::Grade {
+        curves: ph_core::Curves { master: vec![[0.0, 0.0], [1.0, 0.0]], ..Default::default() },
+        ..Default::default()
+    };
+    let p = px0(&mut c, draw(g));
+    assert!(p.iter().all(|v| v.abs() < 0.01), "flat-zero curve {p:?}");
+    // Qualifier on red, shift hue by 1/3 turn -> red becomes green-dominant.
+    let mut g = ph_core::Grade {
+        qualifier: ph_core::Qualifier { enabled: true, hue_center: 0.0, hue_width: 0.1, hue_shift: 1.0 / 3.0, ..Default::default() },
+        ..Default::default()
+    };
+    let p = px0(&mut c, draw(g.clone()));
+    assert!(p[1] > p[0], "red qualified and rotated towards green {p:?}");
+    // Show matte: selected pixel shows white.
+    g.qualifier.show_matte = true;
+    let p = px0(&mut c, draw(g));
+    assert!(p.iter().all(|v| *v > 0.9), "matte {p:?}");
 }

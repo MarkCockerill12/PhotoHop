@@ -150,6 +150,13 @@ pub fn colour_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
             scalar(app, ui, id, "Saturation", g.saturation.at(t), 0.0..=2.0, |g| &mut g.saturation);
         });
 
+        egui::CollapsingHeader::new("Curves").default_open(false).show(ui, |ui| {
+            crate::ui::curves::curves_editor(app, ui, id, &g);
+        });
+        egui::CollapsingHeader::new("Qualifier (select a colour range)").default_open(false).show(ui, |ui| {
+            crate::ui::curves::qualifier_controls(app, ui, id, &g);
+        });
+
         ui.separator();
         ui.label(egui::RichText::new("Match colour (no AI)").strong());
         let others: Vec<(LayerId, String)> =

@@ -68,6 +68,9 @@ pub struct App {
     pub edit_mask: bool,
     pub match_mode: crate::matching::MatchMode,
     pub match_reference: Option<LayerId>,
+    pub curve_channel: crate::ui::CurveChannel,
+    /// Index of the curve point being dragged.
+    pub curve_drag: Option<usize>,
     pub pixel_undo: Vec<PixelUndo>,
     pub pixel_redo: Vec<PixelUndo>,
     pub brush: BrushSettings,
@@ -97,6 +100,8 @@ impl App {
             edit_mask: false,
             match_mode: crate::matching::MatchMode::ColourCast,
             match_reference: None,
+            curve_channel: Default::default(),
+            curve_drag: None,
             pixel_undo: Vec::new(),
             pixel_redo: Vec::new(),
             brush: BrushSettings::default(),

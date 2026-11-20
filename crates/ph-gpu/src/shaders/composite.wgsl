@@ -23,6 +23,13 @@ struct LayerParams {
     g_tone: vec4<f32>,    // contrast, pivot, saturation, match amount
     g_mscale: vec4<f32>,
     g_moffset: vec4<f32>,
+    g_qual0: vec4<f32>,   // hue centre, hue half-width, softness, enabled
+    g_qual1: vec4<f32>,   // sat lo, sat hi, lum lo, lum hi
+    g_qual2: vec4<f32>,   // hue shift, saturation, gain, flags (1 invert, 2 show matte)
+    has_curves: u32,
+    _e0: u32,
+    _e1: u32,
+    _e2: u32,
 };
 
 @group(0) @binding(0) var backdrop: texture_2d<f32>;
@@ -31,6 +38,58 @@ struct LayerParams {
 @group(0) @binding(3) var src_sampler: sampler;
 @group(0) @binding(4) var<uniform> P: LayerParams;
 @group(0) @binding(5) var mask_tex: texture_2d<f32>;
+@group(0) @binding(6) var<uniform> curve_lut: array<vec4<f32>, 256>;
+
+const AX = vec3<f32>(1.0, -0.5, -0.5);
+const BX = vec3<f32>(0.0, 0.8660254, -0.8660254);
+
+fn lut_at(v: f32, ch: u32) -> f32 {
+    let x = clamp(v, 0.0, 1.0) * 255.0;
+    let i = u32(floor(x));
+    let j = min(i + 1u, 255u);
+    return mix(curve_lut[i][ch], curve_lut[j][ch], x - f32(i));
+}
+
+fn apply_curves(p: vec3<f32>) -> vec3<f32> {
+    let c = vec3<f32>(lut_at(p.r, 0u), lut_at(p.g, 1u), lut_at(p.b, 2u));
+    return vec3<f32>(lut_at(c.r, 3u), lut_at(c.g, 3u), lut_at(c.b, 3u));
+}
+
+// HSL-style key on perceptual input colour (hue 0..1, red = 0).
+fn qualifier_key(p: vec3<f32>) -> f32 {
+    let mx = max(p.r, max(p.g, p.b));
+    let mn = min(p.r, min(p.g, p.b));
+    let d = mx - mn;
+    var h = 0.0;
+    if (d > 1e-5) {
+        if (mx == p.r) { h = (p.g - p.b) / d; }
+        else if (mx == p.g) { h = 2.0 + (p.b - p.r) / d; }
+        else { h = 4.0 + (p.r - p.g) / d; }
+        h = fract(h / 6.0 + 1.0);
+    }
+    let l = (mx + mn) * 0.5;
+    let s = select(d / (1.0 - abs(2.0 * l - 1.0) + 1e-6), 0.0, d < 1e-5);
+    let soft = max(P.g_qual0.z, 1e-4);
+    let hd = abs(fract(h - P.g_qual0.x + 0.5) - 0.5);
+    let hk = 1.0 - smoothstep(P.g_qual0.y, P.g_qual0.y + soft, hd);
+    let sk = smoothstep(P.g_qual1.x - soft, P.g_qual1.x, s) * (1.0 - smoothstep(P.g_qual1.y, P.g_qual1.y + soft, s));
+    let y = luma(p);
+    let lk = smoothstep(P.g_qual1.z - soft, P.g_qual1.z, y) * (1.0 - smoothstep(P.g_qual1.w, P.g_qual1.w + soft, y));
+    var k = hk * sk * lk;
+    if ((u32(P.g_qual2.w) & 1u) != 0u) { k = 1.0 - k; }
+    return k;
+}
+
+fn qualifier_adjust(p: vec3<f32>) -> vec3<f32> {
+    let y = luma(p);
+    let c = p - y;
+    let x0 = dot(c, AX) / 1.5;
+    let y0 = dot(c, BX) / 1.5;
+    let a = P.g_qual2.x * 6.2831853;
+    let x1 = (x0 * cos(a) - y0 * sin(a)) * P.g_qual2.y;
+    let y1 = (x0 * sin(a) + y0 * cos(a)) * P.g_qual2.y;
+    return (y + x1 * AX + y1 * BX) * P.g_qual2.z;
+}
 
 fn to_perceptual(c: vec3<f32>) -> vec3<f32> {
     let x = max(c, vec3<f32>(0.0));
@@ -87,6 +146,12 @@ fn blend(mode: u32, b: vec3<f32>, l: vec3<f32>) -> vec3<f32> {
 }
 
 fn grade(lin: vec3<f32>) -> vec3<f32> {
+    var key = 0.0;
+    let qual_on = P.g_qual0.w > 0.5;
+    if (qual_on) {
+        key = qualifier_key(to_perceptual(lin));
+        if ((u32(P.g_qual2.w) & 2u) != 0u) { return from_perceptual(vec3<f32>(key)); }
+    }
     // Linear stage: exposure and white balance (gains normalised to keep luminance).
     var c = lin * exp2(P.g_basic.x);
     let wb = vec3<f32>(exp(0.25 * P.g_basic.y), exp(-0.25 * P.g_basic.z), exp(-0.25 * P.g_basic.y));
@@ -102,7 +167,9 @@ fn grade(lin: vec3<f32>) -> vec3<f32> {
     p = (p - P.g_tone.y) * P.g_tone.x + P.g_tone.y;
     let y = luma(p);
     p = y + (p - y) * P.g_tone.z;
+    if (P.has_curves != 0u) { p = apply_curves(p); }
     p = p + P.g_offset.rgb + P.g_offset.w;
+    if (qual_on) { p = mix(p, qualifier_adjust(p), key); }
     return from_perceptual(max(p, vec3<f32>(0.0)));
 }
 
