@@ -184,6 +184,9 @@ pub fn toolbar(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.separator();
         match app.tool {
+            Tool::Roto => {
+                ui.label(egui::RichText::new("Click: add point · drag: curve · click first point / Enter: close · Del: remove point · Alt-drag handle: break · Esc: done").weak());
+            }
             Tool::Brush | Tool::Eraser => {
                 if app.edit_mask && app.selected_layer().is_some_and(|l| l.mask.is_some()) {
                     ui.label(egui::RichText::new("Editing mask").color(egui::Color32::from_rgb(255, 196, 64)))

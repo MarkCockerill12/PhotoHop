@@ -149,6 +149,9 @@ pub struct Layer {
     /// The layer has a baked normal map (AI estimate) in the project assets, used by relighting.
     #[serde(default)]
     pub has_normals: bool,
+    /// Bezier roto shapes masking this layer (combined with the painted / AI mask).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roto: Vec<crate::roto::RotoShape>,
 }
 
 impl Layer {
@@ -168,6 +171,7 @@ impl Layer {
             mask: None,
             fx: LayerFx::default(),
             has_normals: false,
+            roto: Vec::new(),
         }
     }
 

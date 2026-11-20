@@ -7,8 +7,9 @@ and lens look so the result reads as one image.
 
 It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow this job needs.
 
-> **Status: early development.** The editing shell, colour grading, masks and non-AI colour matching
-> work today; selections, scopes, relighting, tracking and the Blender round-trip are next (see the roadmap).
+> **Status: feature-complete for the core workflow** (v0.4): editing, masks and roto, grading and
+> matching, relighting and shadows, AI cutouts / auto colour / object removal, 3D camera solve, body
+> motion and the Blender round-trip. Expect rough edges.
 
 ## What works now
 
@@ -25,6 +26,8 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
   scene right around you, like a colourist would; also colour cast only, tone only, or full transfer
 - Layer masks: paint to hide (brush) or reveal (eraser), invert, toggle
 - Selections straight into masks (M): rectangle, ellipse, lasso, magic wand; Shift adds, Alt subtracts, feather
+- Bezier roto shapes (P): click points, drag curve handles, close on the first point; Add / Subtract,
+  invert, feather, opacity; keyframe the whole shape (◆) so it follows motion. Combined with AI / painted masks
 - Scopes (S): waveform, RGB parade, vectorscope with skin-tone line, histogram
 - **Integration**: light wrap, blur/sharpen, film grain, cast + contact shadow (auto-detects the feet),
   and **relighting** from AI-estimated normals with a drag-the-sun light pad, rim light and soft
@@ -83,6 +86,7 @@ cargo run --release -p photohop -- photo.jpg  # open a photo, video or .phop pro
 | M | Select → mask (rect / ellipse / lasso / wand) | | |
 | C | Crop tool (Enter applies, Esc cancels) | ← / → | Previous / next frame |
 | B / E | Brush / eraser | Home | Go to start |
+| P | Roto pen (Enter closes, Del removes point, Esc done) | | |
 | H | Hand (pan) — or middle-drag / Space-drag | K | Toggle keyframes on the selected layer |
 | S | Show / hide scopes | | |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo | Ctrl+0 | Fit canvas to window |
@@ -94,14 +98,14 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
 ## Roadmap
 
 1. **Editing shell** — layers, timeline, keyframes, transforms, crop, paint, export *(done)*
-2. **Masks & cutouts** — mask painting, selections, AI cutouts (photo + video) *(done)*; bezier roto
+2. **Masks & cutouts** — mask painting, selections, AI cutouts (photo + video), bezier roto shapes *(done)*
 3. **Colour** — wheels, grade, non-AI matching, curves, HSL qualifier, scopes, HDR/10-bit video *(done)*;
    camera RAW (DNG) import, OCIO configs
 4. **Integration** — relighting, cast/contact shadows, light wrap, grain, blur/sharpen *(done)*;
    automatic grain/sharpness and light matching, haze *(done)*; bloom
 5. **Tracking** — AI region tracking + match-move, **3D camera solve** (Depth Anything 3, metric, with floor
    plane) driving the Blender camera *(done)*; point/planar trackers, stabiliser
-6. **Blender round-trip** — bundle export, add-on, render import *(done)*; camera solve and body motion export
+6. **Blender round-trip** — bundle export, add-on, render import, camera solve and body motion export *(done)*
 7. **AI auto-colour** and an optional "game-ify" look *(done)*
 
 ## AI (optional)

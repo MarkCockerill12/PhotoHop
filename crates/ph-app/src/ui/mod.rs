@@ -6,6 +6,7 @@ mod inspector;
 mod integration;
 mod layers;
 mod menu;
+pub mod roto;
 mod timeline;
 mod viewer;
 
@@ -100,6 +101,7 @@ fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
         (egui::Key::C, Tool::Crop),
         (egui::Key::B, Tool::Brush),
         (egui::Key::E, Tool::Eraser),
+        (egui::Key::P, Tool::Roto),
         (egui::Key::H, Tool::Hand),
     ] {
         if pressed(key) {
@@ -109,7 +111,9 @@ fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     if pressed(egui::Key::Space) {
         app.toggle_play();
     }
-    if pressed(egui::Key::Delete) {
+    if app.tool == Tool::Roto && roto::keys(app, ctx) {
+        // Enter / Escape / Delete went to the roto shape.
+    } else if pressed(egui::Key::Delete) {
         app.delete_selected();
     }
     let fps = app.doc.canvas.fps;

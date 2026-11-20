@@ -12,6 +12,7 @@ mod matching;
 mod media_cache;
 mod paint;
 mod render;
+mod roto;
 mod scopes;
 mod selection;
 mod track;

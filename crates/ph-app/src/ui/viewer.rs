@@ -149,7 +149,7 @@ fn handle_tools(app: &mut App, ui: &egui::Ui, resp: &egui::Response) {
                     app.status = format!("Magic wand: {e:#}");
                 }
             }
-            Tool::Brush | Tool::Eraser => {
+            Tool::Brush | Tool::Eraser | Tool::Roto => {
                 if let Some(d) = start_drag(app, p) {
                     update_drag(app, d, to_vec(p), shift);
                     app.viewer.drag = Some(d);
@@ -190,6 +190,7 @@ fn start_drag(app: &mut App, p: egui::Pos2) -> Option<Drag> {
     }
     match app.tool {
         Tool::Hand => None,
+        Tool::Roto => crate::ui::roto::start(app, p),
         Tool::Crop => {
             app.viewer.crop = Some((start, start));
             Some(base(DragMode::Crop, None))
@@ -244,6 +245,7 @@ fn update_drag(app: &mut App, d: Drag, screen: Vec2, shift: bool) {
     let cur = app.viewer.screen_to_canvas(to_pos(screen));
     let (t, auto) = (app.time, app.auto_key);
     match d.mode {
+        DragMode::Roto(r) => crate::ui::roto::update(app, &d, r, to_pos(screen)),
         DragMode::Crop => {
             if let Some((a, _)) = app.viewer.crop {
                 app.viewer.crop = Some((a, cur));
@@ -324,6 +326,7 @@ fn update_drag(app: &mut App, d: Drag, screen: Vec2, shift: bool) {
 fn finish_drag(app: &mut App) {
     let Some(d) = app.viewer.drag.take() else { return };
     match d.mode {
+        DragMode::Roto(_) => crate::ui::roto::finish(app),
         DragMode::Paint => {
             let rasters = if d.target_mask { &mut app.masks } else { &mut app.paint };
             if let Some(id) = d.layer
@@ -393,6 +396,7 @@ fn apply_crop(app: &mut App) {
 
 fn draw_overlays(app: &App, painter: &egui::Painter, resp: &egui::Response) {
     let accent = egui::Color32::from_rgb(90, 170, 255);
+    crate::ui::roto::draw(app, painter, resp.hover_pos());
     if app.tool == Tool::Move
         && let Some(id) = app.selected
         && let Some(c) = layer_corners(app, id)

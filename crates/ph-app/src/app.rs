@@ -18,11 +18,12 @@ pub enum Tool {
     Crop,
     Brush,
     Eraser,
+    Roto,
     Hand,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 6] = [Tool::Move, Tool::Select, Tool::Crop, Tool::Brush, Tool::Eraser, Tool::Hand];
+    pub const ALL: [Tool; 7] = [Tool::Move, Tool::Select, Tool::Crop, Tool::Brush, Tool::Eraser, Tool::Roto, Tool::Hand];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -31,6 +32,7 @@ impl Tool {
             Tool::Crop => "Crop (C)",
             Tool::Brush => "Brush (B)",
             Tool::Eraser => "Eraser (E)",
+            Tool::Roto => "Roto pen — bezier mask shapes (P)",
             Tool::Hand => "Hand (H)",
         }
     }
@@ -43,6 +45,7 @@ impl Tool {
             Tool::Crop => ICON_CROP,
             Tool::Brush => ICON_BRUSH,
             Tool::Eraser => ICON_INK_ERASER,
+            Tool::Roto => ICON_DRAW,
             Tool::Hand => ICON_PAN_TOOL,
         }
     }
@@ -75,6 +78,8 @@ pub struct App {
     pub match_reference: Option<LayerId>,
     pub curve_channel: crate::ui::CurveChannel,
     pub select_shape: crate::selection::SelectShape,
+    /// Roto shape being edited (index into the selected layer's shapes).
+    pub roto_edit: Option<usize>,
     pub wand_threshold: f32,
     pub select_feather: f32,
     /// Index of the curve point being dragged.
@@ -130,6 +135,7 @@ impl App {
             match_reference: None,
             curve_channel: Default::default(),
             select_shape: Default::default(),
+            roto_edit: None,
             wand_threshold: 0.12,
             select_feather: 0.0,
             curve_drag: None,

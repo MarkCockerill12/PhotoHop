@@ -20,6 +20,7 @@ pub enum DragMode {
     Paint,
     AiBox,
     Select,
+    Roto(crate::ui::roto::RotoDrag),
 }
 
 /// State captured when a viewer drag starts (values are absolute, so drags never drift).
@@ -184,10 +185,17 @@ pub fn composite(
         };
         keep.insert(key);
         let mut mask_srgb = false;
+        let has_roto = layer.roto.iter().any(|r| r.active());
+        // With roto shapes the base mask is read on the CPU and multiplied by the shapes.
+        let mut base: Option<(u64, Frame, bool)> = None;
         let mask = match (&layer.mask, masks.get(&layer.id)) {
             (Some(m), _) if m.enabled && m.video.is_some() => {
                 let mv = m.video.and_then(|id| doc.media(id));
                 match mv.and_then(|mref| fetch(mref, layer.media_time(t))) {
+                    Some((mkey, frame)) if has_roto => {
+                        base = Some((mkey, frame, true));
+                        None
+                    }
                     Some((mkey, frame)) => {
                         if !gpu.has_source(mkey, 0) {
                             gpu.upload(mkey, 0, frame.width, frame.height, &frame.pixels);
@@ -199,6 +207,10 @@ pub fn composite(
                     None => None,
                 }
             }
+            (Some(m), Some(r)) if m.enabled && has_roto => {
+                base = Some((hash_of(("mask", layer.id, r.revision)), r.to_frame(), false));
+                None
+            }
             (Some(m), Some(r)) if m.enabled => {
                 let mkey = hash_of(("mask", layer.id));
                 if !gpu.has_source(mkey, r.revision) {
@@ -209,6 +221,40 @@ pub fn composite(
                 Some(mkey)
             }
             _ => None,
+        };
+        let mask = if has_roto {
+            let inv = layer.mask.as_ref().is_some_and(|m| m.invert);
+            let rkey = hash_of(("roto", layer.id, crate::roto::signature(layer, t), base.as_ref().map(|b| b.0), inv));
+            if !gpu.has_source(rkey, 0) {
+                let (w, h) = match &base {
+                    Some((_, f, _)) => (f.width, f.height),
+                    None => {
+                        let k = (2048.0 / size.x.max(size.y)).min(1.0);
+                        (((size.x * k) as u32).max(1), ((size.y * k) as u32).max(1))
+                    }
+                };
+                let cov = crate::roto::layer_coverage(layer, t, w, h, [size.x, size.y]).unwrap_or_default();
+                let invert_base = layer.mask.as_ref().is_some_and(|m| m.invert);
+                let px: Vec<f16> = cov
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, c)| {
+                        let b = base.as_ref().map_or(1.0, |(_, f, srgb)| {
+                            let v = f.pixels[i * 4].to_f32();
+                            let v = if *srgb { ph_media::color::linear_to_srgb(v.max(0.0)) } else { v }.clamp(0.0, 1.0);
+                            if invert_base { 1.0 - v } else { v }
+                        });
+                        let v = c * b;
+                        [v, v, v, 1.0].map(f16::from_f32)
+                    })
+                    .collect();
+                gpu.upload(rkey, 0, w, h, &px);
+            }
+            keep.insert(rkey);
+            mask_srgb = false;
+            Some(rkey)
+        } else {
+            mask
         };
         let normals_key = match (layer.has_normals, normals.get(&layer.id)) {
             (true, Some(r)) if layer.fx.relight.enabled => {
@@ -246,7 +292,7 @@ pub fn composite(
             opacity: layer.opacity.at(t),
             blend: layer.blend,
             mask,
-            mask_invert: layer.mask.as_ref().is_some_and(|m| m.invert),
+            mask_invert: !has_roto && layer.mask.as_ref().is_some_and(|m| m.invert),
             mask_srgb,
             grade,
             curves,
