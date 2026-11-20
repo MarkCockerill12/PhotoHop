@@ -131,6 +131,11 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.status = format!("AI: {e:#}");
             }
+            if ui.add_enabled(!busy, egui::Button::new("Video: solve 3D camera (for Blender)")).on_hover_text("Depth Anything 3 recovers the phone's 3D movement and the floor").clicked()
+                && let Err(e) = app.start_ai(crate::ai::AiTask::CameraSolve)
+            {
+                app.status = format!("AI: {e:#}");
+            }
             if ui.add_enabled(!busy, egui::Button::new("Video: track a region… (draw a box)")).clicked() {
                 app.ai.picking_box = true;
                 app.status = "Drag a box around the region to track (e.g. the window glass) on the selected video layer.".into();

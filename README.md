@@ -36,7 +36,9 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
 - **Blender round trip**: File > Export to Blender writes a bundle; the PhotoHop Bridge add-on
   (`photohop_bridge.zip` on the Releases page) builds the scene — matching camera, you as a card that
   casts shadows and hides props behind you, a shadow-catcher floor at your feet, a sun from the Relight
-  pad. Add props (e.g. a game weapon in your hand), Render for PhotoHop, then File > Import Blender render
+  pad. Add props (e.g. a game weapon in your hand), Render for PhotoHop, then File > Import Blender render.
+  For moving shots, run **AI > Video: solve 3D camera** first: the Blender camera then follows your
+  phone's real movement (lens and floor included), so 3D props stay locked to the room
 - Curves (master / R / G / B, GIMP spline) and an HSL qualifier to select a colour range and shift its
   hue, saturation or brightness (with a matte view to check the selection)
 - Undo/redo for everything, including brush strokes
@@ -93,7 +95,8 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
    camera RAW (DNG) import, OCIO configs
 4. **Integration** — relighting, cast/contact shadows, light wrap, grain, blur/sharpen *(done)*;
    automatic grain/sharpness and light matching, haze *(done)*; bloom
-5. **Tracking** — AI region tracking + match-move *(done)*; point/planar trackers, stabiliser, 3D camera solve
+5. **Tracking** — AI region tracking + match-move, **3D camera solve** (Depth Anything 3, metric, with floor
+   plane) driving the Blender camera *(done)*; point/planar trackers, stabiliser
 6. **Blender round-trip** — bundle export, add-on, render import *(done)*; camera solve and body motion export
 7. **AI auto-colour** and an optional "game-ify" look *(done)*
 

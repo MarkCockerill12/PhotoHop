@@ -26,6 +26,8 @@ pub enum AiTask {
     Remove(String),
     /// AI auto-colour (Harmonizer): the suggestion is fitted into the layer's R/G/B curves.
     AutoColour,
+    /// 3D camera solve of a video layer (Depth Anything 3) for the Blender bridge.
+    CameraSolve,
 }
 
 impl AiTask {
@@ -38,11 +40,12 @@ impl AiTask {
             Self::VideoCutout => "AI video cutout".into(),
             Self::Remove(p) => format!("AI remove \"{p}\""),
             Self::AutoColour => "AI auto colour".into(),
+            Self::CameraSolve => "AI camera solve".into(),
         }
     }
 
     fn is_video(&self) -> bool {
-        matches!(self, Self::TrackBox(_) | Self::VideoCutout)
+        matches!(self, Self::TrackBox(_) | Self::VideoCutout | Self::CameraSolve)
     }
 }
 
@@ -169,6 +172,7 @@ impl App {
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
         let output = match &task {
             AiTask::Normals => dir.join(format!("normals-{}.png", id.0)),
+            AiTask::CameraSolve => dir.join(format!("camera-{stamp}.json")),
             t if t.is_video() => dir.join(format!("maskvideo-{}-{stamp}.mp4", id.0)),
             AiTask::Remove(_) => dir.join(format!("patch-{}-{stamp}.png", id.0)),
             _ => dir.join(format!("mask-{}.png", id.0)),
@@ -191,6 +195,14 @@ impl App {
                 args.extend(["--prompt".into(), prompt.clone()]);
             }
             AiTask::AutoColour => unreachable!("handled by start_auto_colour"),
+            AiTask::CameraSolve => {
+                args[0] = "camera-solve".into();
+                // Ignore the person when finding the floor, if a video cutout exists.
+                let mask = layer.mask.as_ref().and_then(|m| m.video).and_then(|mid| self.doc.media(mid)).map(|m| m.path.clone());
+                if let Some(m) = mask {
+                    args.extend(["--mask".into(), m.to_string_lossy().into_owned()]);
+                }
+            }
         }
         let (tx, rx) = unbounded();
         let python = self.ai.python.clone();
@@ -250,6 +262,16 @@ impl App {
         let job = self.ai.job.take().expect("job");
         let applied: Result<String> = (|| {
             let v = result.map_err(|e| anyhow::anyhow!(e))?;
+            if job.task == AiTask::CameraSolve {
+                let path = job.output.clone();
+                self.edit("Camera solve", |d| d.camera_solve = Some(path));
+                return Ok(format!(
+                    "Camera solved: {} frames, camera moved {:.2} m{}. It will drive the Blender camera (File > Export to Blender).",
+                    v["frames"].as_u64().unwrap_or(0),
+                    v["travel_m"].as_f64().unwrap_or(0.0),
+                    if v["ground"].as_bool() == Some(true) { ", floor found" } else { "" }
+                ));
+            }
             if job.task.is_video() {
                 let info = ph_media::video::probe(&job.output)?;
                 let media = ph_core::MediaRef {

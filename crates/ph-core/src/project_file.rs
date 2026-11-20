@@ -35,6 +35,9 @@ pub fn save(doc: &Project, path: &Path) -> Result<()> {
     for m in &mut out.media {
         m.path = relativize(&m.path, base);
     }
+    if let Some(c) = &mut out.camera_solve {
+        *c = relativize(c, base);
+    }
     let json = serde_json::to_string_pretty(&out)?;
     let tmp = path.with_extension("phop.tmp");
     std::fs::write(&tmp, json).with_context(|| format!("writing {}", tmp.display()))?;
@@ -53,6 +56,11 @@ pub fn load(path: &Path) -> Result<Project> {
         if m.path.is_relative() {
             m.path = base.join(&m.path);
         }
+    }
+    if let Some(c) = &mut doc.camera_solve
+        && c.is_relative()
+    {
+        *c = base.join(&*c);
     }
     Ok(doc)
 }

@@ -261,12 +261,16 @@ impl App {
         // Move AI results out of the temp folder into the project's assets so they survive.
         let tmp = crate::ai::results_dir();
         let assets = project_file::assets_dir(&path);
-        for m in &mut self.doc.media {
-            if m.path.starts_with(&tmp) {
+        let mut temp_files: Vec<&mut std::path::PathBuf> = self.doc.media.iter_mut().map(|m| &mut m.path).collect();
+        if let Some(c) = &mut self.doc.camera_solve {
+            temp_files.push(c);
+        }
+        for path in temp_files {
+            if path.starts_with(&tmp) {
                 std::fs::create_dir_all(&assets)?;
-                let dest = assets.join(m.path.file_name().context("media file name")?);
-                std::fs::copy(&m.path, &dest).context("copying AI result into project assets")?;
-                m.path = dest;
+                let dest = assets.join(path.file_name().context("result file name")?);
+                std::fs::copy(&*path, &dest).context("copying AI result into project assets")?;
+                *path = dest;
             }
         }
         project_file::save(&self.doc, &path)?;

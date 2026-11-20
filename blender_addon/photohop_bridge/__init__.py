@@ -17,7 +17,7 @@ import sys
 import bpy
 from bpy.props import StringProperty
 from bpy_extras.io_utils import ImportHelper
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 bl_info = {
     "name": "PhotoHop Bridge",
@@ -181,6 +181,9 @@ def build_scene(bundle):
     sun.rotation_euler = to_light.to_track_quat("Z", "Y").to_euler()
     col.objects.link(sun)
 
+    if m.get("camera"):
+        _apply_camera_solve(folder, m, scene, cam, cam_data, card, floor, sun, (w, h))
+
     world = scene.world or bpy.data.worlds.new("World")
     scene.world = world
     world.use_nodes = True
@@ -190,6 +193,83 @@ def build_scene(bundle):
         bgnode.inputs["Strength"].default_value = 0.6
     scene["photohop_bundle"] = folder
     return folder
+
+
+# OpenCV world (x right, y down, z forward) → Blender world (x right, y forward, z up).
+_CV_TO_BL = Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 0, 0, 1)))
+# OpenCV camera axes → Blender camera axes (Blender cameras look down -Z with +Y up).
+_CAM_FLIP = Matrix(((1, 0, 0, 0), (0, -1, 0, 0), (0, 0, -1, 0), (0, 0, 0, 1)))
+
+
+def _apply_camera_solve(folder, m, scene, cam, cam_data, card, floor, sun, size):
+    """Animate the camera from camera.json, put the floor on the solved ground, and keep the subject
+    card glued to the camera at the subject's solved distance."""
+    with open(os.path.join(folder, m["camera"]), encoding="utf8") as f:
+        solve = json.load(f)
+    w, h = size
+    frames = solve["camera_to_world"]
+    k = solve["intrinsics"]
+    sx = w / float(solve["width"])
+
+    # Align the solved ground with Blender's floor (z = 0) when it really points up.
+    world = _CV_TO_BL.copy()
+    ground = solve.get("ground")
+    ground_ok = bool(ground) and ground["normal"][1] < -0.6
+    if ground_ok:
+        n = (_CV_TO_BL.to_3x3() @ Vector(ground["normal"])).normalized()
+        p = _CV_TO_BL @ Vector(ground["point"])
+        rot = n.rotation_difference(Vector((0.0, 0.0, 1.0))).to_matrix().to_4x4()
+        lift = Matrix.Translation((0.0, 0.0, -(rot @ p).z))
+        world = lift @ rot @ _CV_TO_BL
+
+    # Lens from the solved focal length (36 mm sensor across the width).
+    cam_data.sensor_fit = "HORIZONTAL"
+    cam_data.sensor_width = 36.0
+    cam_data.lens = float(k["fx"]) * sx / w * 36.0
+    cam.rotation_mode = "QUATERNION"
+    cam.animation_data_clear()
+    for i, c2w in enumerate(frames[: scene.frame_end]):
+        cam.matrix_world = world @ Matrix(c2w) @ _CAM_FLIP
+        cam.keyframe_insert("location", frame=i + 1)
+        cam.keyframe_insert("rotation_quaternion", frame=i + 1)
+    scene.frame_set(1)
+    view_layer = bpy.context.view_layer
+    view_layer.update()
+
+    # Subject distance: where the ray through the feet meets the ground (else keep 5 m).
+    dist = DISTANCE
+    if ground_ok:
+        fx_px, fy_px = m.get("feet_px", [w / 2, h])
+        ray_cam = Vector(((fx_px / sx - k["cx"]) / k["fx"], (fy_px / sx - k["cy"]) / k["fy"], 1.0))
+        c2w0 = world @ Matrix(frames[0])
+        origin = c2w0.to_translation()
+        direction = (c2w0.to_3x3() @ ray_cam).normalized()
+        if abs(direction.z) > 1e-4:
+            t = -origin.z / direction.z
+            if t > 0:
+                dist = t / ray_cam.length * ray_cam.z
+    # Card glued to the camera, filling the frame at that distance.
+    fov_x = 2.0 * math.atan(w / (2.0 * float(k["fx"]) * sx))
+    card_w = 2.0 * dist * math.tan(fov_x / 2.0)
+    card_h = card_w * h / w
+    card.parent = cam
+    card.matrix_parent_inverse = Matrix.Identity(4)
+    card.location = (0.0, 0.0, -dist)
+    card.rotation_euler = (0.0, 0.0, 0.0)
+    card.scale = (card_w, card_h, 1.0)
+    if ground_ok:
+        floor.location = (cam.matrix_world.to_translation().x, cam.matrix_world.to_translation().y, 0.0)
+    else:
+        # No trustworthy ground: put the floor through the feet at the card distance, using the
+        # solved lens (the static 50° guess no longer applies).
+        fx_px, fy_px = m.get("feet_px", [w / 2, h])
+        feet_cam = Vector(((fx_px / sx - k["cx"]) / k["fx"] * dist, (fy_px / sx - k["cy"]) / k["fy"] * dist, dist))
+        feet_world = world @ Matrix(frames[0]) @ feet_cam
+        cam0 = cam.matrix_world.to_translation()
+        floor.location = (cam0.x, cam0.y, feet_world.z)
+    # The sun was set in camera-0 space; carry it into the solved world.
+    sun.matrix_world = (world @ Matrix(frames[0]) @ _CAM_FLIP).to_quaternion().to_matrix().to_4x4() @ sun.matrix_world
+    scene["photohop_camera_solved"] = True
 
 
 class PHOTOHOP_OT_import_bundle(bpy.types.Operator, ImportHelper):
@@ -253,9 +333,23 @@ def _cli():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     folder = build_scene(argv[0])
     if "--test-prop" in argv:
-        # A bright cube standing on the floor to the subject's side, to check shadows + holdout.
-        cam_h = bpy.context.scene.objects["PhotoHop shadow catcher"].location.z
-        bpy.ops.mesh.primitive_cube_add(size=0.5, location=(-0.6, 5.6, cam_h + 0.25))
+        # A bright cube standing on the floor in front of the frame-1 camera, to check shadows,
+        # holdout and (with a camera solve) that it stays put in the world as the camera moves.
+        sc = bpy.context.scene
+        sc.frame_set(1)
+        cam = sc.camera
+        floor_z = sc.objects["PhotoHop shadow catcher"].location.z
+        fwd = cam.matrix_world.to_3x3() @ Vector((0.0, 0.0, -1.0))
+        right = cam.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+        fwd.z, right.z = 0.0, 0.0
+        card = sc.objects["PhotoHop subject"]
+        dist = abs(card.location.z) if card.parent else DISTANCE
+        if "--prop-depth" in argv:
+            dist = float(argv[argv.index("--prop-depth") + 1]) / 0.8
+        side = float(argv[argv.index("--prop-side") + 1]) if "--prop-side" in argv else -0.15
+        pos = cam.matrix_world.to_translation() + fwd.normalized() * dist * 0.8 + right.normalized() * dist * side
+        z = cam.matrix_world.to_translation().z if "--prop-depth" in argv else floor_z + 0.06 * dist
+        bpy.ops.mesh.primitive_cube_add(size=0.12 * dist, location=(pos.x, pos.y, z))
         cube = bpy.context.active_object
         mat = bpy.data.materials.new("test")
         mat.use_nodes = True
@@ -263,10 +357,19 @@ def _cli():
         cube.data.materials.append(mat)
     if "--render" in argv:
         sc = bpy.context.scene
-        if "--first-frame" in argv:
-            sc.frame_end = sc.frame_start
         sc.cycles.samples = 32
-        bpy.ops.render.render(animation=True)
+        if "--frames" in argv:
+            # Render only the listed frames (comma separated), e.g. --frames 1,99
+            base = sc.render.filepath
+            for f in (int(x) for x in argv[argv.index("--frames") + 1].split(",")):
+                sc.frame_set(f)
+                sc.render.filepath = f"{base}{f:04d}"
+                bpy.ops.render.render(write_still=True)
+            sc.render.filepath = base
+        else:
+            if "--first-frame" in argv:
+                sc.frame_end = sc.frame_start
+            bpy.ops.render.render(animation=True)
     print("PHOTOHOP_BRIDGE_OK", folder)
 
 

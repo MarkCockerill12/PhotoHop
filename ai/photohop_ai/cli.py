@@ -93,6 +93,13 @@ def cmd_harmonize(args) -> dict:
     return {"output": args.output, "filters": dict(zip(names, a))}
 
 
+def cmd_camera(args) -> dict:
+    from .camera import solve
+
+    info = solve(args.input, args.output, device=_device(), keyframes=args.keyframes, mask_video=args.mask)
+    return {"output": args.output, **info}
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="photohop-ai")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -130,12 +137,17 @@ def main(argv=None) -> int:
     hz.add_argument("comp")
     hz.add_argument("mask")
     hz.add_argument("output")
+    cs = sub.add_parser("camera-solve", help="3D camera track of a video (Depth Anything 3) -> camera.json")
+    cs.add_argument("input")
+    cs.add_argument("output")
+    cs.add_argument("--keyframes", type=int, default=48)
+    cs.add_argument("--mask", default=None, help="mask video of moving subjects to ignore for the ground plane")
     args = p.parse_args(argv)
     t0 = time.time()
     try:
         cmds = {"info": cmd_info, "matte": cmd_matte, "segment": cmd_segment, "normals": cmd_normals,
                 "track": cmd_track, "video-matte": cmd_video_matte, "remove": cmd_remove,
-                "harmonize": cmd_harmonize}
+                "harmonize": cmd_harmonize, "camera-solve": cmd_camera}
         result = cmds[args.cmd](args)
         result.update(ok=True, seconds=round(time.time() - t0, 2))
     except Exception as e:  # noqa: BLE001 - report every failure as JSON for the app

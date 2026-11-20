@@ -209,6 +209,9 @@ pub struct Project {
     pub media: Vec<MediaRef>,
     /// Bottom-most layer first.
     pub layers: Vec<Layer>,
+    /// 3D camera solve of the main video (camera.json from photohop-ai), used by the Blender bridge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera_solve: Option<std::path::PathBuf>,
 }
 
 pub const FORMAT_VERSION: u32 = 1;
@@ -221,6 +224,7 @@ impl Project {
             canvas: Canvas { width, height, fps, duration, background: [0.0, 0.0, 0.0, 0.0] },
             media: Vec::new(),
             layers: Vec::new(),
+            camera_solve: None,
         }
     }
 

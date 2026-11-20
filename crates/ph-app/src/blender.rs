@@ -84,6 +84,11 @@ impl App {
                 "intensity": r.intensity.at(t0),
             },
         });
+        let mut manifest = manifest;
+        if let Some(cam) = &self.doc.camera_solve {
+            std::fs::copy(cam, dir.join("camera.json")).context("copying the camera solve into the bundle")?;
+            manifest["camera"] = serde_json::json!("camera.json");
+        }
         std::fs::write(dir.join(MANIFEST), serde_json::to_string_pretty(&manifest)?)?;
         std::fs::write(
             dir.join("README.txt"),
