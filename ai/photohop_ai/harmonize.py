@@ -3,45 +3,19 @@ predicts six filter amounts: temperature, brightness, contrast, saturation, high
 Harmonizer's code and weights are CC BY-NC-SA 4.0, so they are downloaded on first use into a local
 cache rather than shipped with PhotoHop. PhotoHop then fits its own editable curves to the change."""
 
-import io
-import os
 import sys
-import urllib.request
-import zipfile
-from pathlib import Path
 
 import numpy as np
 import torch
 from PIL import Image
 
+from .fetch import ensure_repo
+
 REPO_ZIP = "https://github.com/ZHKKKe/Harmonizer/archive/HEAD.zip"
 
 
-def _cache() -> Path:
-    base = os.environ.get("PHOTOHOP_AI_CACHE") or os.path.join(Path.home(), ".cache", "photohop-ai")
-    return Path(base) / "harmonizer"
-
-
-def _find(root: Path) -> Path | None:
-    """The extracted repo folder (its name contains the commit) holding the weights."""
-    if not root.is_dir():
-        return None
-    for weights in root.glob("*/pretrained/harmonizer.pth"):
-        return weights.parent.parent
-    return None
-
-
-def _ensure_repo() -> Path:
-    root = _cache()
-    found = _find(root)
-    if found is None:
-        root.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(REPO_ZIP, timeout=120) as r:
-            zipfile.ZipFile(io.BytesIO(r.read())).extractall(root)
-        found = _find(root)
-    if found is None:
-        raise RuntimeError("Harmonizer download did not contain pretrained/harmonizer.pth")
-    return found
+def _ensure_repo():
+    return ensure_repo("harmonizer", REPO_ZIP, "pretrained/harmonizer.pth")
 
 
 def harmonize(comp_path: str, mask_path: str, out_path: str, device: str = "cpu", max_side: int = 1024) -> list[float]:

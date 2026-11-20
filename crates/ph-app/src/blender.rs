@@ -89,6 +89,12 @@ impl App {
             std::fs::copy(cam, dir.join("camera.json")).context("copying the camera solve into the bundle")?;
             manifest["camera"] = serde_json::json!("camera.json");
         }
+        if let Some(body) = &self.doc.body_motion {
+            for (ext, name) in [("json", "body.json"), ("obj", "body.obj"), ("pc2", "body.pc2")] {
+                std::fs::copy(body.with_extension(ext), dir.join(name)).with_context(|| format!("copying the body capture ({ext}) into the bundle"))?;
+            }
+            manifest["body"] = serde_json::json!("body.json");
+        }
         std::fs::write(dir.join(MANIFEST), serde_json::to_string_pretty(&manifest)?)?;
         std::fs::write(
             dir.join("README.txt"),

@@ -38,7 +38,11 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
   casts shadows and hides props behind you, a shadow-catcher floor at your feet, a sun from the Relight
   pad. Add props (e.g. a game weapon in your hand), Render for PhotoHop, then File > Import Blender render.
   For moving shots, run **AI > Video: solve 3D camera** first: the Blender camera then follows your
-  phone's real movement (lens and floor included), so 3D props stay locked to the room
+  phone's real movement (lens and floor included), so 3D props stay locked to the room.
+  **AI > Video: capture body motion** (after the video cutout) adds your animated 3D body in Blender: it
+  hides props that go behind you, casts real shadows onto props and the floor, and gives
+  `PhotoHop right hand` / `PhotoHop left hand` empties — parent a game weapon to one and it follows
+  your hand
 - Curves (master / R / G / B, GIMP spline) and an HSL qualifier to select a colour range and shift its
   hue, saturation or brightness (with a matte view to check the selection)
 - Undo/redo for everything, including brush strokes

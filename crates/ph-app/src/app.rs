@@ -262,12 +262,17 @@ impl App {
         let tmp = crate::ai::results_dir();
         let assets = project_file::assets_dir(&path);
         let mut temp_files: Vec<&mut std::path::PathBuf> = self.doc.media.iter_mut().map(|m| &mut m.path).collect();
-        if let Some(c) = &mut self.doc.camera_solve {
-            temp_files.push(c);
-        }
+        temp_files.extend([&mut self.doc.camera_solve, &mut self.doc.body_motion].into_iter().flatten());
         for path in temp_files {
             if path.starts_with(&tmp) {
                 std::fs::create_dir_all(&assets)?;
+                // Body motion keeps its mesh and cache beside the JSON.
+                for ext in ["obj", "pc2"] {
+                    let side = path.with_extension(ext);
+                    if path.extension().is_some_and(|e| e == "json") && side.exists() {
+                        std::fs::copy(&side, assets.join(side.file_name().context("result file name")?))?;
+                    }
+                }
                 let dest = assets.join(path.file_name().context("result file name")?);
                 std::fs::copy(&*path, &dest).context("copying AI result into project assets")?;
                 *path = dest;

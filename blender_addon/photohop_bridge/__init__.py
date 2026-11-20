@@ -12,6 +12,7 @@ Headless use (testing / batch):
 import json
 import math
 import os
+import struct
 import sys
 
 import bpy
@@ -183,6 +184,8 @@ def build_scene(bundle):
 
     if m.get("camera"):
         _apply_camera_solve(folder, m, scene, cam, cam_data, card, floor, sun, (w, h))
+    if m.get("body"):
+        _apply_body(folder, m, scene, cam, cam_data, card, floor, col, (w, h))
 
     world = scene.world or bpy.data.worlds.new("World")
     scene.world = world
@@ -270,6 +273,124 @@ def _apply_camera_solve(folder, m, scene, cam, cam_data, card, floor, sun, size)
     # The sun was set in camera-0 space; carry it into the solved world.
     sun.matrix_world = (world @ Matrix(frames[0]) @ _CAM_FLIP).to_quaternion().to_matrix().to_4x4() @ sun.matrix_world
     scene["photohop_camera_solved"] = True
+    scene["photohop_ground_solved"] = ground_ok
+
+
+def _body_material():
+    """Holdout for the camera (the real footage shows through and the body hides props behind it),
+    solid for shadow rays (the body casts shadows on props and the floor)."""
+    mat = bpy.data.materials.new("PhotoHop body")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    holdout = nt.nodes.new("ShaderNodeHoldout")
+    diffuse = nt.nodes.new("ShaderNodeBsdfDiffuse")
+    diffuse.inputs["Color"].default_value = (0.0, 0.0, 0.0, 1.0)
+    path = nt.nodes.new("ShaderNodeLightPath")
+    mix = nt.nodes.new("ShaderNodeMixShader")
+    nt.links.new(path.outputs["Is Shadow Ray"], mix.inputs["Fac"])
+    nt.links.new(holdout.outputs[0], mix.inputs[1])
+    nt.links.new(diffuse.outputs[0], mix.inputs[2])
+    nt.links.new(mix.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+def _read_obj(path):
+    verts, faces = [], []
+    with open(path, encoding="utf8") as f:
+        for line in f:
+            if line.startswith("v "):
+                verts.append(tuple(map(float, line.split()[1:4])))
+            elif line.startswith("f "):
+                faces.append(tuple(int(t.split("/")[0]) - 1 for t in line.split()[1:]))
+    return verts, faces
+
+
+def _pc2_depths(path):
+    """Per-frame (min, max) camera depth of the body, read from the PC2 cache."""
+    import numpy as np
+
+    with open(path, "rb") as f:
+        f.read(12)
+        _ver, n_verts, _start, _rate, n_frames = struct.unpack("<iiffi", f.read(20))
+        data = np.fromfile(f, dtype="<f4", count=n_frames * n_verts * 3).reshape(n_frames, n_verts, 3)
+    z = data[:, :, 2]
+    return z.min(1), z.max(1), data[0]
+
+
+def _apply_body(folder, m, scene, cam, cam_data, card, floor, col, size):
+    """Animated 3D body (SAM 3D Body via PhotoHop) glued to the camera in its own camera space:
+    occludes props behind you, casts real shadows, and gives hand empties to parent props to."""
+    with open(os.path.join(folder, m["body"]), encoding="utf8") as f:
+        body = json.load(f)
+    w, h = size
+    k = body["intrinsics"]
+    sx = w / float(body["width"])
+    fx = float(k["fx"]) * sx
+    if not scene.get("photohop_camera_solved"):
+        # The body was fitted with this lens; the static camera must use it too.
+        cam_data.sensor_fit = "HORIZONTAL"
+        cam_data.sensor_width = 36.0
+        cam_data.lens = fx / w * 36.0
+
+    stem = os.path.splitext(os.path.join(folder, m["body"]))[0]  # body.json → body.obj / body.pc2
+    verts, faces = _read_obj(stem + ".obj")
+    mesh = bpy.data.meshes.new("PhotoHop body")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    for poly in mesh.polygons:
+        poly.use_smooth = True
+    obj = bpy.data.objects.new("PhotoHop body", mesh)
+    col.objects.link(obj)
+    obj.data.materials.append(_body_material())
+    obj.parent = cam
+    obj.matrix_parent_inverse = Matrix.Identity(4)
+    obj.matrix_basis = _CAM_FLIP.copy()
+    mod = obj.modifiers.new("PhotoHop motion", "MESH_CACHE")
+    mod.cache_format = "PC2"
+    mod.filepath = stem + ".pc2"
+    mod.frame_start = 1.0
+    mod.forward_axis, mod.up_axis = "POS_Y", "POS_Z"
+
+    # Card (pixel-accurate holdout of the footage) sits just behind the body each frame, so props
+    # in front of any part of you show, and the body mesh handles props between your limbs.
+    _near, far, first = _pc2_depths(mod.filepath)
+    card.parent = cam
+    card.matrix_parent_inverse = Matrix.Identity(4)
+    card.rotation_euler = (0.0, 0.0, 0.0)
+    for i in range(min(len(far), scene.frame_end)):
+        d = float(far[i]) + 0.05
+        card.location = (0.0, 0.0, -d)
+        card.scale = (d * w / fx, d * w / fx * h / w, 1.0)
+        card.keyframe_insert("location", frame=i + 1)
+        card.keyframe_insert("scale", frame=i + 1)
+    if hasattr(card, "visible_shadow"):
+        card.visible_shadow = False  # the body casts the shadows now
+
+    # Floor through your lowest point on frame 1 unless the camera solve found the real ground.
+    scene.frame_set(1)
+    bpy.context.view_layer.update()
+    if not scene.get("photohop_ground_solved"):
+        lowest = max(first, key=lambda v: v[1])  # largest y = lowest in OpenCV camera space
+        p = cam.matrix_world @ _CAM_FLIP @ Vector(lowest)
+        floor.location = (p.x, p.y, p.z)
+
+    # Hand empties: X along the fingers, Z out of the back of the hand. Parent props to these.
+    for side, mats in body.get("hands", {}).items():
+        e = bpy.data.objects.new(f"PhotoHop {side} hand", None)
+        e.empty_display_type = "ARROWS"
+        e.empty_display_size = 0.1
+        col.objects.link(e)
+        e.parent = cam
+        e.matrix_parent_inverse = Matrix.Identity(4)
+        e.rotation_mode = "QUATERNION"
+        for i, mm in enumerate(mats[: scene.frame_end]):
+            e.matrix_basis = _CAM_FLIP @ Matrix(mm)
+            e.keyframe_insert("location", frame=i + 1)
+            e.keyframe_insert("rotation_quaternion", frame=i + 1)
+    scene.frame_set(1)
+    scene["photohop_body"] = True
 
 
 class PHOTOHOP_OT_import_bundle(bpy.types.Operator, ImportHelper):
@@ -355,6 +476,22 @@ def _cli():
         mat.use_nodes = True
         mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.9, 0.2, 0.1, 1.0)
         cube.data.materials.append(mat)
+    if "--test-hand-prop" in argv and "PhotoHop right hand" in bpy.context.scene.objects:
+        # A bright 'gun' (30 cm bar) held in the right hand: checks hand tracking + body occlusion.
+        hand = bpy.context.scene.objects["PhotoHop right hand"]
+        bpy.ops.mesh.primitive_cube_add(size=1.0)
+        bar = bpy.context.active_object
+        bar.name = "Test hand prop"
+        bar.scale = (0.3, 0.04, 0.06)
+        bar.parent = hand
+        bar.matrix_parent_inverse = Matrix.Identity(4)
+        bar.location = (0.1, 0.0, 0.0)
+        mat = bpy.data.materials.new("Test prop orange")
+        mat.diffuse_color = (1.0, 0.35, 0.05, 1.0)
+        mat.use_nodes = True
+        mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (1.0, 0.35, 0.05, 1.0)
+        bar.data.materials.append(mat)
+
     if "--render" in argv:
         sc = bpy.context.scene
         sc.cycles.samples = 32

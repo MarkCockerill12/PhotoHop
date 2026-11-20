@@ -100,6 +100,13 @@ def cmd_camera(args) -> dict:
     return {"output": args.output, **info}
 
 
+def cmd_body(args) -> dict:
+    from .body import capture
+
+    info = capture(args.input, args.mask, args.output, camera=args.camera, device=_device())
+    return {"output": args.output, **info}
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="photohop-ai")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -142,12 +149,17 @@ def main(argv=None) -> int:
     cs.add_argument("output")
     cs.add_argument("--keyframes", type=int, default=48)
     cs.add_argument("--mask", default=None, help="mask video of moving subjects to ignore for the ground plane")
+    bm = sub.add_parser("body-motion", help="3D body mesh per frame (SAM 3D Body) -> body.json/.obj/.pc2")
+    bm.add_argument("input")
+    bm.add_argument("output", help="body.json (body.obj and body.pc2 are written next to it)")
+    bm.add_argument("--mask", required=True, help="mask video of the person (PhotoHop video cutout)")
+    bm.add_argument("--camera", default=None, help="camera.json from camera-solve (lens)")
     args = p.parse_args(argv)
     t0 = time.time()
     try:
         cmds = {"info": cmd_info, "matte": cmd_matte, "segment": cmd_segment, "normals": cmd_normals,
                 "track": cmd_track, "video-matte": cmd_video_matte, "remove": cmd_remove,
-                "harmonize": cmd_harmonize, "camera-solve": cmd_camera}
+                "harmonize": cmd_harmonize, "camera-solve": cmd_camera, "body-motion": cmd_body}
         result = cmds[args.cmd](args)
         result.update(ok=True, seconds=round(time.time() - t0, 2))
     except Exception as e:  # noqa: BLE001 - report every failure as JSON for the app

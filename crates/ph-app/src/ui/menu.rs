@@ -136,6 +136,11 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.status = format!("AI: {e:#}");
             }
+            if ui.add_enabled(!busy, egui::Button::new("Video: capture body motion (for Blender)")).on_hover_text("SAM 3D Body: your 3D body every frame, for real shadows, occlusion and props in your hands. Needs the video cutout first; solve the camera first if the phone moves.").clicked()
+                && let Err(e) = app.start_ai(crate::ai::AiTask::BodyMotion)
+            {
+                app.status = format!("AI: {e:#}");
+            }
             if ui.add_enabled(!busy, egui::Button::new("Video: track a region… (draw a box)")).clicked() {
                 app.ai.picking_box = true;
                 app.status = "Drag a box around the region to track (e.g. the window glass) on the selected video layer.".into();

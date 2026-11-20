@@ -28,6 +28,8 @@ pub enum AiTask {
     AutoColour,
     /// 3D camera solve of a video layer (Depth Anything 3) for the Blender bridge.
     CameraSolve,
+    /// 3D body motion of the person in a video layer (SAM 3D Body) for the Blender bridge.
+    BodyMotion,
 }
 
 impl AiTask {
@@ -41,11 +43,12 @@ impl AiTask {
             Self::Remove(p) => format!("AI remove \"{p}\""),
             Self::AutoColour => "AI auto colour".into(),
             Self::CameraSolve => "AI camera solve".into(),
+            Self::BodyMotion => "AI body motion".into(),
         }
     }
 
     fn is_video(&self) -> bool {
-        matches!(self, Self::TrackBox(_) | Self::VideoCutout | Self::CameraSolve)
+        matches!(self, Self::TrackBox(_) | Self::VideoCutout | Self::CameraSolve | Self::BodyMotion)
     }
 }
 
@@ -173,6 +176,7 @@ impl App {
         let output = match &task {
             AiTask::Normals => dir.join(format!("normals-{}.png", id.0)),
             AiTask::CameraSolve => dir.join(format!("camera-{stamp}.json")),
+            AiTask::BodyMotion => dir.join(format!("body-{stamp}.json")),
             t if t.is_video() => dir.join(format!("maskvideo-{}-{stamp}.mp4", id.0)),
             AiTask::Remove(_) => dir.join(format!("patch-{}-{stamp}.png", id.0)),
             _ => dir.join(format!("mask-{}.png", id.0)),
@@ -195,6 +199,15 @@ impl App {
                 args.extend(["--prompt".into(), prompt.clone()]);
             }
             AiTask::AutoColour => unreachable!("handled by start_auto_colour"),
+            AiTask::BodyMotion => {
+                args[0] = "body-motion".into();
+                let mask = layer.mask.as_ref().and_then(|m| m.video).and_then(|mid| self.doc.media(mid)).map(|m| m.path.clone());
+                let mask = mask.context("cut yourself out first (AI > Video: cut out subject) — body capture follows that cutout")?;
+                args.extend(["--mask".into(), mask.to_string_lossy().into_owned()]);
+                if let Some(c) = &self.doc.camera_solve {
+                    args.extend(["--camera".into(), c.to_string_lossy().into_owned()]);
+                }
+            }
             AiTask::CameraSolve => {
                 args[0] = "camera-solve".into();
                 // Ignore the person when finding the floor, if a video cutout exists.
@@ -262,6 +275,16 @@ impl App {
         let job = self.ai.job.take().expect("job");
         let applied: Result<String> = (|| {
             let v = result.map_err(|e| anyhow::anyhow!(e))?;
+            if job.task == AiTask::BodyMotion {
+                let path = job.output.clone();
+                self.edit("Body motion", |d| d.body_motion = Some(path));
+                return Ok(format!(
+                    "Body captured on {} of {} frames ({:.1} m from the camera). Export to Blender to get the animated body, its shadows and hand empties for props.",
+                    v["detected"].as_u64().unwrap_or(0),
+                    v["frames"].as_u64().unwrap_or(0),
+                    v["distance_m"].as_f64().unwrap_or(0.0)
+                ));
+            }
             if job.task == AiTask::CameraSolve {
                 let path = job.output.clone();
                 self.edit("Camera solve", |d| d.camera_solve = Some(path));

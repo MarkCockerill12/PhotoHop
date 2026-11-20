@@ -35,7 +35,7 @@ pub fn save(doc: &Project, path: &Path) -> Result<()> {
     for m in &mut out.media {
         m.path = relativize(&m.path, base);
     }
-    if let Some(c) = &mut out.camera_solve {
+    for c in [&mut out.camera_solve, &mut out.body_motion].into_iter().flatten() {
         *c = relativize(c, base);
     }
     let json = serde_json::to_string_pretty(&out)?;
@@ -57,10 +57,10 @@ pub fn load(path: &Path) -> Result<Project> {
             m.path = base.join(&m.path);
         }
     }
-    if let Some(c) = &mut doc.camera_solve
-        && c.is_relative()
-    {
-        *c = base.join(&*c);
+    for c in [&mut doc.camera_solve, &mut doc.body_motion].into_iter().flatten() {
+        if c.is_relative() {
+            *c = base.join(&*c);
+        }
     }
     Ok(doc)
 }

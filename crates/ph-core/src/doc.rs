@@ -212,6 +212,9 @@ pub struct Project {
     /// 3D camera solve of the main video (camera.json from photohop-ai), used by the Blender bridge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub camera_solve: Option<std::path::PathBuf>,
+    /// Body motion capture (body.json + .obj + .pc2 beside it), used by the Blender bridge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_motion: Option<std::path::PathBuf>,
 }
 
 pub const FORMAT_VERSION: u32 = 1;
@@ -225,6 +228,7 @@ impl Project {
             media: Vec::new(),
             layers: Vec::new(),
             camera_solve: None,
+            body_motion: None,
         }
     }
 
