@@ -19,6 +19,7 @@ Then point PhotoHop at the environment's Python (AI ▸ Settings, or `PHOTOHOP_A
 | `video-matte IN.mp4 OUT.mp4` | BiRefNet + MatAnyone 2 (S-Lab, non-commercial) | cut a person out of a whole clip |
 | `track IN.mp4 OUT.mp4 --box x0,y0,x1,y1` | SAM 2.1 large (Apache-2.0) | follow a region (e.g. a window) through a clip |
 | `remove IN OUT --prompt "toy gun"` | SAM 3 + FLUX.2 klein 4B (Apache-2.0) | repaint an object away; output is an RGBA patch limited to the object (needs `diffusers`) |
+| `harmonize COMP MASK OUT` | Harmonizer (CC BY-NC-SA, downloaded on first use, ~20 MB) | AI auto-colour: predicts temperature / brightness / contrast / saturation / highlight / shadow; PhotoHop fits its own curves to the change |
 | `segment IN OUT --prompt "person"` | SAM 3 (Meta SAM licence, gated: accept on Hugging Face and run `hf auth login`) | any text prompt, e.g. "toy gun" |
 
 Video commands need two extra packages (install without dependencies to avoid build tools):

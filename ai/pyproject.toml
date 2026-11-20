@@ -14,6 +14,7 @@ dependencies = [
     "einops",
     "kornia",
     "huggingface_hub",
+    "opencv-python-headless",
 ]
 
 [project.optional-dependencies]

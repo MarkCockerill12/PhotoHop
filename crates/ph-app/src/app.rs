@@ -575,7 +575,7 @@ impl App {
     }
 
     /// Canvas-sized composite of only the layers chosen by `keep` (no grade on `ungraded`).
-    fn composite_only(&mut self, keep: impl Fn(LayerId) -> bool, ungraded: Option<LayerId>) -> Result<ph_media::Frame> {
+    pub(crate) fn composite_only(&mut self, keep: impl Fn(LayerId) -> bool, ungraded: Option<LayerId>) -> Result<ph_media::Frame> {
         let mut doc = self.doc.clone();
         for l in &mut doc.layers {
             l.visible = l.visible && keep(l.id);

@@ -109,6 +109,11 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
         });
         ui.menu_button("AI", |ui| {
             let busy = app.ai_running();
+            if ui.add_enabled(!busy, egui::Button::new("Auto colour (match me to the scene)")).on_hover_text("Harmonizer suggests the colour change; PhotoHop applies it as editable curves").clicked()
+                && let Err(e) = app.start_ai(crate::ai::AiTask::AutoColour)
+            {
+                app.status = format!("AI: {e:#}");
+            }
             if ui.add_enabled(!busy, egui::Button::new("Cut out subject (selected layer)")).clicked()
                 && let Err(e) = app.start_ai(crate::ai::AiTask::Matte)
             {

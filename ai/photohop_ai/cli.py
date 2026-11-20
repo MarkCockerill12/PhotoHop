@@ -85,6 +85,14 @@ def cmd_remove(args) -> dict:
     return {"output": args.output, "coverage": cover}
 
 
+def cmd_harmonize(args) -> dict:
+    from .harmonize import harmonize
+
+    a = harmonize(args.comp, args.mask, args.output, device=_device())
+    names = ["temperature", "brightness", "contrast", "saturation", "highlight", "shadow"]
+    return {"output": args.output, "filters": dict(zip(names, a))}
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="photohop-ai")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -118,11 +126,16 @@ def main(argv=None) -> int:
     rm.add_argument("--prompt", required=True, help="what to remove, e.g. 'toy gun'")
     rm.add_argument("--fill", default="empty background, seamless continuation of the surrounding scene, no people, no faces, no objects, photo",
                     help="what should be there instead")
+    hz = sub.add_parser("harmonize", help="AI auto-colour (Harmonizer) -> harmonized composite PNG")
+    hz.add_argument("comp")
+    hz.add_argument("mask")
+    hz.add_argument("output")
     args = p.parse_args(argv)
     t0 = time.time()
     try:
         cmds = {"info": cmd_info, "matte": cmd_matte, "segment": cmd_segment, "normals": cmd_normals,
-                "track": cmd_track, "video-matte": cmd_video_matte, "remove": cmd_remove}
+                "track": cmd_track, "video-matte": cmd_video_matte, "remove": cmd_remove,
+                "harmonize": cmd_harmonize}
         result = cmds[args.cmd](args)
         result.update(ok=True, seconds=round(time.time() - t0, 2))
     except Exception as e:  # noqa: BLE001 - report every failure as JSON for the app

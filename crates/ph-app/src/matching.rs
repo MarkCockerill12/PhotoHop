@@ -164,6 +164,53 @@ pub fn surround_stats(background: &Frame, subject: &Frame) -> Option<(Stats, Sta
     (s.weight > 0.0 && t.weight > 0.0).then_some((s, t))
 }
 
+/// Fit per-channel tone curves (perceptual 0..1) mapping `before` to `after` over pixels where
+/// `mask` > 0.9. Both images are 8-bit sRGB RGB of the same size. Used to turn an AI colour
+/// suggestion into ordinary, editable curves (the AI's pixels themselves are discarded).
+pub fn fit_curves(before: &[u8], after: &[u8], mask: &[u8], max_points: usize) -> [Vec<[f32; 2]>; 3] {
+    const BINS: usize = 32;
+    std::array::from_fn(|c| {
+        let (mut sum, mut cnt) = ([0f64; BINS], [0u32; BINS]);
+        for (i, m) in mask.iter().enumerate() {
+            if *m < 230 {
+                continue;
+            }
+            let x = before[i * 3 + c] as usize;
+            let b = (x * BINS / 256).min(BINS - 1);
+            sum[b] += after[i * 3 + c] as f64 / 255.0;
+            cnt[b] += 1;
+        }
+        let total: u32 = cnt.iter().sum();
+        let mut pts: Vec<[f32; 2]> = (0..BINS)
+            .filter(|&b| cnt[b] >= (total / 500).max(3))
+            .map(|b| [((b as f32 + 0.5) / BINS as f32), (sum[b] / cnt[b] as f64) as f32])
+            .collect();
+        if pts.is_empty() {
+            return crate::matching::identity();
+        }
+        // Monotone, then thin to at most `max_points` evenly spaced along the data.
+        for i in 1..pts.len() {
+            pts[i][1] = pts[i][1].max(pts[i - 1][1]);
+        }
+        if pts.len() > max_points {
+            let step = (pts.len() - 1) as f32 / (max_points - 1) as f32;
+            pts = (0..max_points).map(|k| pts[((k as f32 * step).round() as usize).min(pts.len() - 1)]).collect();
+        }
+        // Extend to the ends with slope 1 so untouched tones continue naturally.
+        let first = pts[0];
+        let last = *pts.last().expect("non-empty");
+        let mut out = vec![[0.0, (first[1] - first[0]).clamp(0.0, 1.0)]];
+        out.extend(pts);
+        out.push([1.0, (last[1] + 1.0 - last[0]).clamp(0.0, 1.0)]);
+        out.dedup_by(|a, b| (a[0] - b[0]).abs() < 1e-3);
+        out
+    })
+}
+
+fn identity() -> Vec<[f32; 2]> {
+    ph_core::grade::IDENTITY_CURVE.to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,6 +219,17 @@ mod tests {
     fn flat(rgb: [f32; 3]) -> Frame {
         let px: Vec<f16> = (0..64).flat_map(|_| [rgb[0], rgb[1], rgb[2], 1.0].map(f16::from_f32)).collect();
         Frame::new(8, 8, px)
+    }
+
+    #[test]
+    fn fitted_curve_reproduces_a_brightening() {
+        // after = before * 1.2 (clamped) on the masked pixels.
+        let before: Vec<u8> = (0..300u32).flat_map(|i| [(i % 200) as u8; 3]).collect();
+        let after: Vec<u8> = before.iter().map(|v| ((*v as f32) * 1.2).min(255.0) as u8).collect();
+        let mask = vec![255u8; 300];
+        let [r, _, _] = fit_curves(&before, &after, &mask, 8);
+        let y = ph_core::grade::eval_curve(&r, 100.0 / 255.0);
+        assert!((y - 120.0 / 255.0).abs() < 0.03, "{y}");
     }
 
     #[test]

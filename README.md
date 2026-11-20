@@ -95,7 +95,7 @@ Scroll to zoom (towards the cursor). In the Move tool, hold Shift for free scali
    automatic grain/sharpness and light matching, haze *(done)*; bloom
 5. **Tracking** — AI region tracking + match-move *(done)*; point/planar trackers, stabiliser, 3D camera solve
 6. **Blender round-trip** — bundle export, add-on, render import *(done)*; camera solve and body motion export
-7. **AI auto-colour** and an optional "game-ify" look *(game-ify done)*
+7. **AI auto-colour** and an optional "game-ify" look *(done)*
 
 ## AI (optional)
 
@@ -114,7 +114,9 @@ fits a task can be plugged in; the defaults below were benchmarked on an RTX 407
 | Human normals (relighting) | Sapiens2 1B | MoGe-2 normals |
 | Scene depth | Depth Anything 3 Metric-Large (Apache-2.0) | MoGe-2, DA3 Giant (non-commercial) |
 
-**Available now** (AI menu): *Cut out subject* (BiRefNet), *Mask from text* (SAM 3, e.g. "person",
+**Available now** (AI menu): **Auto colour** (Harmonizer predicts temperature / brightness / contrast /
+saturation / highlights / shadows; PhotoHop applies the change as your layer's editable R/G/B curves —
+the AI never touches your pixels), *Cut out subject* (BiRefNet), *Mask from text* (SAM 3, e.g. "person",
 "toy gun"), *Video cutout* and *Track a region* (MatAnyone 2 / SAM 2.1), *Estimate normals* for relighting
 (Sapiens2), and *Remove object* — the one tool that paints: FLUX.2 klein repaints only inside the
 object's mask and the result arrives as a separate patch layer you can hide or delete. Results go straight into the layer's mask, where you can refine them with the brush, and

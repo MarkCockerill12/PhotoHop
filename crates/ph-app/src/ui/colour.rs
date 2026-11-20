@@ -176,6 +176,11 @@ pub fn colour_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
                 ui.selectable_value(&mut app.match_mode, m, m.label());
             }
         });
+        if ui.add_enabled(!app.ai_running(), egui::Button::new("AI auto colour")).on_hover_text("Harmonizer suggests the change; applied as editable R/G/B curves").clicked()
+            && let Err(e) = app.start_ai(crate::ai::AiTask::AutoColour)
+        {
+            app.status = format!("AI: {e:#}");
+        }
         if ui.button("Match").on_hover_text("Measure both layers and set the match to fit").clicked()
             && let Err(e) = app.match_colour()
         {

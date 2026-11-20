@@ -24,6 +24,8 @@ pub enum AiTask {
     VideoCutout,
     /// Repaint an object away (SAM 3 + FLUX.2 klein); result is a patch layer limited to the object.
     Remove(String),
+    /// AI auto-colour (Harmonizer): the suggestion is fitted into the layer's R/G/B curves.
+    AutoColour,
 }
 
 impl AiTask {
@@ -35,6 +37,7 @@ impl AiTask {
             Self::TrackBox(_) => "AI region track".into(),
             Self::VideoCutout => "AI video cutout".into(),
             Self::Remove(p) => format!("AI remove \"{p}\""),
+            Self::AutoColour => "AI auto colour".into(),
         }
     }
 
@@ -47,6 +50,8 @@ pub struct AiJob {
     pub layer: LayerId,
     pub task: AiTask,
     pub output: PathBuf,
+    /// Inputs written for the job (auto colour: composite and mask), kept for post-processing.
+    aux: Vec<PathBuf>,
     rx: Receiver<Result<serde_json::Value, String>>,
 }
 
@@ -127,8 +132,11 @@ impl App {
             bail!("an AI job is already running");
         }
         let id = self.selected.context("select a layer first")?;
-        let layer = self.doc.layer(id).context("layer missing")?;
         let dir = temp_dir()?;
+        if task == AiTask::AutoColour {
+            return self.start_auto_colour(id, &dir);
+        }
+        let layer = self.doc.layer(id).context("layer missing")?;
         let input = match &layer.content {
             LayerContent::Media { media, .. } if task.is_video() => {
                 let m = self.doc.media(*media).context("media missing")?;
@@ -182,6 +190,7 @@ impl App {
                 args[0] = "remove".into();
                 args.extend(["--prompt".into(), prompt.clone()]);
             }
+            AiTask::AutoColour => unreachable!("handled by start_auto_colour"),
         }
         let (tx, rx) = unbounded();
         let python = self.ai.python.clone();
@@ -192,8 +201,46 @@ impl App {
             ctx.request_repaint();
         })?;
         self.status = format!("{} running… (first run downloads the model)", task.label());
-        self.ai.job = Some(AiJob { layer: id, task, output, rx });
+        self.ai.job = Some(AiJob { layer: id, task, output, rx, aux: Vec::new() });
         Ok(())
+    }
+
+    fn spawn_job(&mut self, id: LayerId, task: AiTask, output: PathBuf, args: Vec<String>, aux: Vec<PathBuf>) -> Result<()> {
+        let (tx, rx) = unbounded();
+        let python = self.ai.python.clone();
+        let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+        let ctx = self.egui_ctx.clone();
+        std::thread::Builder::new().name("photohop-ai".into()).spawn(move || {
+            let _ = tx.send(run_sidecar(&python, &args, exe_dir.as_deref()));
+            ctx.request_repaint();
+        })?;
+        self.status = format!("{} running…", task.label());
+        self.ai.job = Some(AiJob { layer: id, task, output, rx, aux });
+        Ok(())
+    }
+
+    /// Render the scene with the layer ungraded + its alpha, then ask Harmonizer for a colour fix.
+    fn start_auto_colour(&mut self, id: LayerId, dir: &Path) -> Result<()> {
+        let idx = self.doc.layer_index(id).context("layer missing")?;
+        if idx == 0 {
+            bail!("put a background layer under this one first");
+        }
+        let upto: Vec<LayerId> = self.doc.layers[..=idx].iter().map(|l| l.id).collect();
+        let comp = self.composite_only(|l| upto.contains(&l), Some(id))?;
+        let subject = self.composite_only(|l| l == id, Some(id))?;
+        let scale = (1024.0 / comp.width.max(comp.height) as f32).min(1.0);
+        let (w, h) = (((comp.width as f32 * scale) as u32).max(16), ((comp.height as f32 * scale) as u32).max(16));
+        let rgba = ph_media::color::linear_premul_to_rgba8(&comp.pixels);
+        let comp_img = image::RgbaImage::from_raw(comp.width, comp.height, rgba).context("composite image")?;
+        let comp_rgb = image::DynamicImage::ImageRgba8(comp_img).resize_exact(w, h, image::imageops::FilterType::Triangle).to_rgb8();
+        let alpha: Vec<u8> = subject.pixels.as_chunks::<4>().0.iter().map(|p| (p[3].to_f32().clamp(0.0, 1.0) * 255.0 + 0.5) as u8).collect();
+        let mask_img = image::GrayImage::from_raw(subject.width, subject.height, alpha).context("mask image")?;
+        let mask = image::DynamicImage::ImageLuma8(mask_img).resize_exact(w, h, image::imageops::FilterType::Triangle).to_luma8();
+        let (cp, mp, op) = (dir.join("hz_comp.png"), dir.join("hz_mask.png"), dir.join("hz_out.png"));
+        comp_rgb.save(&cp)?;
+        mask.save(&mp)?;
+        let args = vec!["harmonize".into(), cp.to_string_lossy().into_owned(), mp.to_string_lossy().into_owned(), op.to_string_lossy().into_owned()];
+        self.spawn_job(id, AiTask::AutoColour, op, args, vec![cp, mp])
     }
 
     /// Collect a finished AI job: the result becomes the layer's mask (undoable as a document edit).
@@ -224,6 +271,27 @@ impl App {
                     "{} done in {:.0}s — applied as the layer's mask (tick Invert in the Mask section to cut the region out).",
                     job.task.label(),
                     v["seconds"].as_f64().unwrap_or(0.0)
+                ));
+            }
+            if job.task == AiTask::AutoColour {
+                let before = image::open(&job.aux[0])?.to_rgb8();
+                let mask = image::open(&job.aux[1])?.to_luma8();
+                let after = image::open(&job.output)?.to_rgb8();
+                let [r, g, b] = crate::matching::fit_curves(before.as_raw(), after.as_raw(), mask.as_raw(), 8);
+                let id = job.layer;
+                self.edit("AI auto colour", |d| {
+                    if let Some(l) = d.layer_mut(id) {
+                        l.grade.enabled = true;
+                        l.grade.curves.red = r;
+                        l.grade.curves.green = g;
+                        l.grade.curves.blue = b;
+                    }
+                });
+                let f = &v["filters"];
+                let pick = |k: &str| f[k].as_f64().unwrap_or(0.0);
+                return Ok(format!(
+                    "AI auto colour applied as R/G/B curves (temp {:+.2}, bright {:+.2}, contrast {:+.2}, sat {:+.2}, highlights {:+.2}, shadows {:+.2}). Edit them in Colour > Curves.",
+                    pick("temperature"), pick("brightness"), pick("contrast"), pick("saturation"), pick("highlight"), pick("shadow")
                 ));
             }
             if let AiTask::Remove(what) = &job.task {
@@ -310,5 +378,30 @@ mod tests {
     fn missing_python_reports_error() {
         let e = run_sidecar("definitely-not-a-python-binary", &["info".into()], None).unwrap_err();
         assert!(e.contains("could not start"), "{e}");
+    }
+}
+
+#[cfg(test)]
+mod real_project {
+    /// Opt-in end-to-end AI auto colour:
+    /// `PHOTOHOP_TEST_AUTOCOLOUR=in.phop:out.phop PHOTOHOP_AI_PYTHON=… cargo test -p photohop autocolour_real -- --nocapture`
+    #[test]
+    fn autocolour_real() {
+        let Some(spec) = std::env::var("PHOTOHOP_TEST_AUTOCOLOUR").ok() else { return };
+        let (inp, out) = spec.rsplit_once(':').unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else { return };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+        let mut app = crate::app::App::new(&egui::Context::default(), &device, &queue);
+        app.open(std::path::Path::new(inp)).unwrap();
+        app.selected = app.doc.layers.last().map(|l| l.id);
+        // Media frames load asynchronously for videos; stills load on first request.
+        app.start_ai(super::AiTask::AutoColour).unwrap();
+        while app.ai_running() {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            app.poll_ai();
+        }
+        eprintln!("{}", app.status);
+        app.save_to(std::path::Path::new(out)).unwrap();
     }
 }
