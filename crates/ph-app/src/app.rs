@@ -641,10 +641,17 @@ impl App {
                 r.color = e.color;
                 r.ambient.set(t, e.ambient, auto);
                 r.azimuth.set(t, e.azimuth, auto);
+                // Point the cast shadow away from the same light.
+                let (angle, length, softness, opacity) = ph_core::Shadow::aim_from_light(e.azimuth, e.ambient);
+                let sh = &mut l.fx.shadow;
+                sh.angle.set(t, angle, auto);
+                sh.length.set(t, length, auto);
+                sh.softness.set(t, softness, auto);
+                sh.opacity.set(t, opacity, auto);
             }
         });
         Ok(format!(
-            "Light from the scene: {:.0}°, ambient {:.2}, colour ({:.2}, {:.2}, {:.2}).",
+            "Light from the scene: {:.0}°, ambient {:.2}, colour ({:.2}, {:.2}, {:.2}); the cast shadow now points away from it.",
             e.azimuth, e.ambient, e.color[0], e.color[1], e.color[2]
         ))
     }

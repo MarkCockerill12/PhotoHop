@@ -54,6 +54,20 @@ impl Shadow {
         Affine2::from_translation(anchor) * Affine2::from_mat2(m) * Affine2::from_translation(-anchor)
     }
 
+    /// Point the shadow away from a light seen in the image (`azimuth`: 0 = from the right,
+    /// 90 = from above) and make it as hard as the light: a high sun gives a short shadow falling
+    /// slightly behind the subject, a low light a long one, soft light (high `ambient`) a faint,
+    /// blurred one. Returns (angle°, length, softness px, opacity).
+    pub fn aim_from_light(azimuth: f32, ambient: f32) -> (f32, f32, f32, f32) {
+        let a = azimuth.to_radians();
+        let hx = -a.cos();
+        let vy: f32 = -0.35;
+        let angle = vy.atan2(hx).to_degrees();
+        let length = 0.15 + 0.55 * (1.0 - a.sin().max(0.0));
+        let ambient = ambient.clamp(0.0, 1.0);
+        (angle, length, 4.0 + ambient * 20.0, ((1.0 - ambient) * 0.85).clamp(0.2, 0.75))
+    }
+
     /// Short, nearly flat contact shadow right under the subject.
     pub fn contact_matrix(&self, layer: Affine2, size: Vec2) -> Affine2 {
         let anchor = layer.transform_point2(Vec2::new(size.x * 0.5, size.y * self.ground));
@@ -256,6 +270,22 @@ impl LayerFx {
             .chain(r.ambient.key_times())
             .chain(r.rim.key_times())
             .chain(r.amount.key_times())
+    }
+}
+
+#[cfg(test)]
+mod shadow_aim_tests {
+    use super::Shadow;
+
+    #[test]
+    fn high_light_from_the_right_casts_a_short_shadow_behind_to_the_left() {
+        let (angle, length, _, _) = Shadow::aim_from_light(60.0, 0.4);
+        let a = angle.to_radians();
+        assert!(a.cos() < 0.0, "goes left: {angle}");
+        assert!(a.sin() < 0.0, "goes away from the camera: {angle}");
+        assert!(length < 0.3, "short: {length}");
+        let (_, low, _, _) = Shadow::aim_from_light(175.0, 0.4);
+        assert!(low > 0.6, "low light makes a long shadow: {low}");
     }
 }
 
