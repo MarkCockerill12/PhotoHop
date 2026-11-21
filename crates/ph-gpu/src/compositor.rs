@@ -93,6 +93,8 @@ pub struct FxSample {
     pub lens0: [f32; 4],
     /// bloom amount, threshold, size (canvas px), chromatic aberration (canvas px)
     pub lens1: [f32; 4],
+    /// motion blur length (canvas px), direction (radians)
+    pub motion: [f32; 4],
 }
 
 /// A cast + contact shadow drawn onto the backdrop before the layer itself.
@@ -109,6 +111,9 @@ pub struct ShadowDraw {
     pub color: [f32; 3],
     /// Only darken where the light map says the ground is lit.
     pub follow_light: bool,
+    /// Key of a body-shaped shadow mask in the layer's own pixel space (alpha = shadow); when set
+    /// it is drawn instead of the projected silhouette.
+    pub shape: Option<u64>,
 }
 
 #[repr(C)]
@@ -197,9 +202,7 @@ fn storage_texture(device: &wgpu::Device, w: u32, h: u32, format: wgpu::TextureF
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::STORAGE_BINDING
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC,
+        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     })
 }
@@ -278,12 +281,7 @@ impl Compositor {
         let src = self.sources.get_mut(&key).expect("just inserted");
         src.revision = revision;
         self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &src.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
+            wgpu::TexelCopyTextureInfo { texture: &src.texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             bytemuck::cast_slice(pixels),
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(width * 8), rows_per_image: Some(height) },
             wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -300,10 +298,7 @@ impl Compositor {
             return;
         }
         let d = &self.device;
-        let accum = [
-            storage_texture(d, w, h, WORK_FORMAT, "accum 0"),
-            storage_texture(d, w, h, WORK_FORMAT, "accum 1"),
-        ];
+        let accum = [storage_texture(d, w, h, WORK_FORMAT, "accum 0"), storage_texture(d, w, h, WORK_FORMAT, "accum 1")];
         let accum_views = [accum[0].create_view(&Default::default()), accum[1].create_view(&Default::default())];
         let display = storage_texture(d, w, h, DISPLAY_FORMAT, "display");
         let display_view = display.create_view(&Default::default());
@@ -333,7 +328,9 @@ impl Compositor {
         }
 
         for layer in layers {
-            let Some(src) = self.sources.get(&layer.source) else { continue };
+            let Some(src) = self.sources.get(&layer.source) else {
+                continue;
+            };
             if layer.opacity <= 0.0 {
                 continue;
             }
@@ -345,7 +342,9 @@ impl Compositor {
             let px_scale = inv.matrix2.x_axis.length().max(1e-6);
 
             if let Some(sh) = layer.shadow {
-                let src_from_cast = inv * sh.cast.inverse();
+                let shape_view = sh.shape.and_then(|k| self.sources.get(&k)).map(|m| &m.view);
+                // A body shadow already sits where it falls: read it straight through the layer.
+                let src_from_cast = if shape_view.is_some() { inv } else { inv * sh.cast.inverse() };
                 let src_from_contact = inv * sh.contact.inverse();
                 let sp = ShadowParams {
                     cast: rows(src_from_cast),
@@ -353,8 +352,8 @@ impl Compositor {
                     size: [layer.size.x, layer.size.y, sh.softness * px_scale, sh.contact_softness * px_scale],
                     color: [sh.color[0], sh.color[1], sh.color[2], sh.opacity.clamp(0.0, 1.0) * layer.opacity.clamp(0.0, 1.0)],
                     extra: [
-                        sh.contact_opacity.clamp(0.0, 1.0) * layer.opacity.clamp(0.0, 1.0),
-                        f32::from(u8::from(mask_view.is_some())),
+                        if shape_view.is_some() { 0.0 } else { sh.contact_opacity.clamp(0.0, 1.0) * layer.opacity.clamp(0.0, 1.0) },
+                        f32::from(u8::from(mask_view.is_some() && shape_view.is_none())),
                         f32::from(u8::from(layer.mask_invert)),
                         f32::from(u8::from(sh.follow_light && light_view.is_some())),
                     ],
@@ -364,7 +363,7 @@ impl Compositor {
                 let views = CompositeViews {
                     backdrop: &t.accum_views[cur],
                     dst: &t.accum_views[next],
-                    src: &src.view,
+                    src: shape_view.unwrap_or(&src.view),
                     mask: mask_view.unwrap_or(&self.white_view),
                     normals: &self.white_view,
                     light: light_view.unwrap_or(&self.white_view),
@@ -454,7 +453,9 @@ impl Compositor {
         if self.scope_job.is_some() {
             return;
         }
-        let Some(t) = self.targets.as_ref() else { return };
+        let Some(t) = self.targets.as_ref() else {
+            return;
+        };
         let w = t.width.min(max_width).max(1);
         let h = ((t.height as f32 * w as f32 / t.width as f32).round() as u32).max(1);
         let tex = storage_texture(&self.device, w, h, DISPLAY_FORMAT, "scope");
@@ -521,12 +522,7 @@ impl Compositor {
         });
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("readback") });
         enc.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &t.accum[t.latest],
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
+            wgpu::TexelCopyTextureInfo { texture: &t.accum[t.latest], mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             wgpu::TexelCopyBufferInfo {
                 buffer: &buf,
                 layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: Some(h) },

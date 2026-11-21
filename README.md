@@ -44,14 +44,18 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
   of your silhouette, so the gaps in the leaves line up; your own shadow only darkens sunlit ground
 - **Lens** (Integration): depth of field from an AI depth map (click to pick the focus), bloom around
   bright lights and colour fringing, to make a too-clean background look photographed; Replace window
-  gets *Match the camera* (softness and noise of your shot), out of focus, haze, grain and glow
+  gets *Match the camera* (softness and noise of your shot), out of focus, haze, grain and glow.
+  Layers placed on a depth-of-field background get the same blur as the ground they stand on
 - Bezier roto shapes (P): click points, drag curve handles, close on the first point; Add / Subtract,
   invert, feather, opacity; keyframe the whole shape (◆) so it follows motion. Combined with AI / painted masks
 - Scopes (S): waveform, RGB parade, vectorscope with skin-tone line, histogram
-- **Integration**: light wrap, blur/sharpen, film grain, cast + contact shadow (auto-detects the feet),
+- **Integration**: light wrap, blur/sharpen, motion blur, film grain, cast + contact shadow (auto-detects the feet),
   and **relighting** from AI-estimated normals with a drag-the-sun light pad, rim light and soft
   skin falloff — shading changes only, never repainted pixels
-- **One-click matching without AI**: match grain & sharpness, match light (colour, ambient, direction)
+- **Body-shaped shadow** (AI): rebuilds you in 3D from your photo (SAM 3D Body) and projects that body
+  onto the ground along the light, so the cast shadow starts at your feet and has your real shape
+- **One-click matching without AI**: *Match the camera* (grain, softness and **motion blur** of the
+  background around you: a blurry street blurs you the same way), match light (colour, ambient, direction)
   to the background; atmospheric haze; optional **game-ify** (pixelate / posterize)
 - **Video masks** (AI): cut yourself out of a whole clip, or draw a box to track a region (e.g. a
   window) and replace what's behind it; **Follow tracked region** keyframes another layer to move with it

@@ -32,6 +32,8 @@ pub enum AiTask {
     BodyMotion,
     /// Depth map of the layer (Depth Anything 3) for depth of field.
     Depth,
+    /// 3D body from the layer's photo (SAM 3D Body) for body-shaped shadows.
+    BodyShape,
     /// Find window panes / screens (SAM 3) as glass shapes for "Replace window / screen".
     FindGlass(String),
     /// Track something in front of the glass (a box, SAM 2.1) so it stays in front of the view.
@@ -52,6 +54,7 @@ impl AiTask {
             Self::BodyMotion => "AI body motion".into(),
             Self::FindGlass(_) => "AI find glass".into(),
             Self::Depth => "AI depth".into(),
+            Self::BodyShape => "AI 3D body".into(),
             Self::GlassFront(_) => "AI keep in front".into(),
         }
     }
@@ -92,8 +95,7 @@ pub struct AiState {
 
 impl Default for AiState {
     fn default() -> Self {
-        let python = std::env::var("PHOTOHOP_AI_PYTHON")
-            .unwrap_or_else(|_| if cfg!(windows) { "python".into() } else { "python3".into() });
+        let python = std::env::var("PHOTOHOP_AI_PYTHON").unwrap_or_else(|_| if cfg!(windows) { "python".into() } else { "python3".into() });
         Self {
             python,
             prompt: "person".into(),
@@ -125,9 +127,7 @@ fn run_sidecar(python: &str, args: &[String], exe_dir: Option<&Path>) -> Result<
             cmd.env("PATH", joined);
         }
     }
-    let out = cmd
-        .output()
-        .map_err(|e| format!("could not start {python}: {e}. Set the AI Python in AI > Settings."))?;
+    let out = cmd.output().map_err(|e| format!("could not start {python}: {e}. Set the AI Python in AI > Settings."))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let line = stdout.lines().rev().find(|l| l.trim_start().starts_with('{'));
     match line.and_then(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
@@ -207,6 +207,7 @@ impl App {
         let output = match &task {
             AiTask::Normals => dir.join(format!("normals-{}.png", id.0)),
             AiTask::Depth => dir.join(format!("depth-{}-{stamp}.png", id.0)),
+            AiTask::BodyShape => dir.join(format!("body-{}-{stamp}.json", id.0)),
             AiTask::CameraSolve => dir.join(format!("camera-{stamp}.json")),
             AiTask::BodyMotion => dir.join(format!("body-{stamp}.json")),
             AiTask::FindGlass(_) => dir.join(format!("glass-{stamp}.json")),
@@ -225,6 +226,21 @@ impl App {
             }
             AiTask::Normals => args[0] = "normals".into(),
             AiTask::Depth => args[0] = "depth".into(),
+            AiTask::BodyShape => {
+                args[0] = "body-still".into();
+                // The cut-out: the painted / AI mask, or the photo's own transparency.
+                let mpath = dir.join(format!("bodymask-{}.png", id.0));
+                let mask_frame = match (layer.mask.as_ref().filter(|m| m.enabled && m.video.is_none()), self.masks.get(&id)) {
+                    (Some(_), Some(r)) => r.to_frame(),
+                    _ => {
+                        let f = ph_media::load_image(&input)?;
+                        let px: Vec<half::f16> = f.pixels.as_chunks::<4>().0.iter().flat_map(|p| [p[3], p[3], p[3], half::f16::ONE]).collect();
+                        ph_media::Frame::new(f.width, f.height, px)
+                    }
+                };
+                ph_media::save_frame(&mask_frame, &mpath, false)?;
+                args.extend(["--mask".into(), mpath.to_string_lossy().into_owned()]);
+            }
             AiTask::FindGlass(prompt) => {
                 args[0] = "find-glass".into();
                 args.extend(["--prompt".into(), prompt.clone()]);
@@ -353,7 +369,9 @@ impl App {
     /// Collect a finished AI job: the result becomes the layer's mask (undoable as a document edit).
     pub fn poll_ai(&mut self) {
         let Some(job) = &self.ai.job else { return };
-        let Ok(result) = job.rx.try_recv() else { return };
+        let Ok(result) = job.rx.try_recv() else {
+            return;
+        };
         let job = self.ai.job.take().expect("job");
         let applied: Result<String> = (|| {
             let v = result.map_err(|e| anyhow::anyhow!(e))?;
@@ -440,23 +458,25 @@ impl App {
                 let pick = |k: &str| f[k].as_f64().unwrap_or(0.0);
                 return Ok(format!(
                     "AI auto colour applied as R/G/B curves (temp {:+.2}, bright {:+.2}, contrast {:+.2}, sat {:+.2}, highlights {:+.2}, shadows {:+.2}). Edit them in Colour > Curves.",
-                    pick("temperature"), pick("brightness"), pick("contrast"), pick("saturation"), pick("highlight"), pick("shadow")
+                    pick("temperature"),
+                    pick("brightness"),
+                    pick("contrast"),
+                    pick("saturation"),
+                    pick("highlight"),
+                    pick("shadow")
                 ));
             }
             if let AiTask::Remove(what) = &job.task {
                 let (w, h) = ph_media::image_io::image_dimensions(&job.output)?;
-                let media = ph_core::MediaRef {
-                    id: ph_core::MediaId::new(),
-                    path: job.output.clone(),
-                    kind: ph_core::MediaKind::Image,
-                    width: w,
-                    height: h,
-                };
+                let media =
+                    ph_core::MediaRef { id: ph_core::MediaId::new(), path: job.output.clone(), kind: ph_core::MediaKind::Image, width: w, height: h };
                 let (mid, src) = (media.id, job.layer);
                 let context = !job.aux.is_empty();
                 let name = format!("Removed: {what}");
                 self.edit(&job.task.label(), |d| {
-                    let Some(idx) = d.layer_index(src) else { return };
+                    let Some(idx) = d.layer_index(src) else {
+                        return;
+                    };
                     let base = d.layers[idx].clone();
                     d.media.push(media);
                     let mut l = ph_core::Layer::new(name, ph_core::LayerContent::Media { media: mid, trim_in: 0.0 }, &d.canvas);
@@ -473,6 +493,21 @@ impl App {
                 return Ok(format!(
                     "{} done in {:.0}s — added as a patch layer above (only the object area changes).",
                     job.task.label(),
+                    v["seconds"].as_f64().unwrap_or(0.0)
+                ));
+            }
+            if job.task == AiTask::BodyShape {
+                let (id, path) = (job.layer, job.output.clone());
+                crate::bodyshadow::load(&path)?;
+                self.edit("AI 3D body", |d| {
+                    if let Some(l) = d.layer_mut(id) {
+                        l.body_mesh = Some(path);
+                        l.fx.shadow.enabled = true;
+                        l.fx.shadow.body_shape = true;
+                    }
+                });
+                return Ok(format!(
+                    "3D body ready in {:.0}s: the cast shadow now has your real shape and starts at your feet. Aim it with Match light or Direction.",
                     v["seconds"].as_f64().unwrap_or(0.0)
                 ));
             }
@@ -556,10 +591,14 @@ mod real_project {
     /// `PHOTOHOP_TEST_AUTOCOLOUR=in.phop:out.phop PHOTOHOP_AI_PYTHON=… cargo test -p photohop autocolour_real -- --nocapture`
     #[test]
     fn autocolour_real() {
-        let Some(spec) = std::env::var("PHOTOHOP_TEST_AUTOCOLOUR").ok() else { return };
+        let Some(spec) = std::env::var("PHOTOHOP_TEST_AUTOCOLOUR").ok() else {
+            return;
+        };
         let (inp, out) = spec.rsplit_once(':').unwrap();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else { return };
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            return;
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
         let mut app = crate::app::App::new(&egui::Context::default(), &device, &queue);
         app.open(std::path::Path::new(inp)).unwrap();

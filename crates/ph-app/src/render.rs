@@ -75,7 +75,9 @@ impl Viewer {
 
     /// Register/refresh the composite as an egui texture after the compositor (re)created it.
     pub fn sync_texture(&mut self, rs: &egui_wgpu::RenderState) {
-        let Some(view) = self.gpu.display_view() else { return };
+        let Some(view) = self.gpu.display_view() else {
+            return;
+        };
         let mut renderer = rs.renderer.write();
         match self.tex_id {
             Some(id) if self.tex_gen == self.gpu.display_generation => {
@@ -113,6 +115,7 @@ fn fx_sample(fx: &ph_core::LayerFx, t: f64, fps: f64, has_normals: bool) -> Opti
     let r = &fx.relight;
     let active = fx.light_wrap.at(t) > 0.0
         || fx.blur.at(t) > 0.0
+        || fx.motion_blur.at(t) > 0.0
         || fx.sharpen.at(t) > 0.0
         || fx.grain.at(t) > 0.0
         || fx.haze.at(t) > 0.0
@@ -137,6 +140,7 @@ fn fx_sample(fx: &ph_core::LayerFx, t: f64, fps: f64, has_normals: bool) -> Opti
         game: [fx.pixelate, fx.posterize, 0.0, 0.0],
         lens0: [fx.lens.dof_amount.at(t), fx.lens.focus.at(t), fx.lens.focus_range, f32::from(u8::from(fx.lens.dof))],
         lens1: [fx.lens.bloom.at(t), fx.lens.bloom_threshold, fx.lens.bloom_size, fx.lens.chroma.at(t)],
+        motion: [fx.motion_blur.at(t), fx.motion_angle.to_radians(), 0.0, 0.0],
         ..Default::default()
     })
 }
@@ -173,6 +177,28 @@ fn scene_light_map(gpu: &mut Compositor, doc: &Project, layer_idx: usize, below:
     Some((key, map.shade))
 }
 
+/// Upload (cached) the body-shaped shadow mask of a layer with a 3D body, in its pixel space.
+fn body_shadow_key(gpu: &mut Compositor, layer: &ph_core::Layer, t: f64, size: Vec2, keep: &mut HashSet<u64>) -> Option<u64> {
+    let s = &layer.fx.shadow;
+    let path = layer.body_mesh.as_ref().filter(|_| s.body_shape)?;
+    let (angle, length) = (s.angle.at(t), s.length.at(t));
+    let key = hash_of(("bodyshadow", layer.id, path, angle.to_bits(), length.to_bits()));
+    if !gpu.has_source(key, 0) {
+        let mesh = crate::bodyshadow::load(path).ok()?;
+        let k = (1024.0 / size.x.max(size.y)).min(1.0);
+        let (w, h) = (((size.x * k) as u32).max(1), ((size.y * k) as u32).max(1));
+        let m = crate::bodyshadow::shadow_mask(&mesh, angle, length, w, h);
+        let px: Vec<f16> = m.iter().flat_map(|v| [0.0, 0.0, 0.0, *v].map(f16::from_f32)).collect();
+        gpu.upload(key, 0, w, h, &px);
+    }
+    keep.insert(key);
+    Some(key)
+}
+
+fn depth_key_exists(layer: &ph_core::Layer, depths: &HashMap<LayerId, PaintRaster>) -> bool {
+    layer.has_depth && depths.contains_key(&layer.id)
+}
+
 fn paint_key(id: LayerId) -> u64 {
     hash_of(("paint", id))
 }
@@ -193,19 +219,25 @@ pub fn composite(
 ) {
     let mut draws = Vec::new();
     let mut keep = HashSet::new();
+    // The nearest layer below with depth of field: (its matrix, source size, layer id).
+    let mut scene_dof: Option<(glam::Affine2, Vec2, LayerId)> = None;
     for (layer_idx, layer) in doc.layers.iter().enumerate().filter(|(_, l)| l.visible && l.active_at(t)) {
         let size = doc.layer_source_size(layer);
         let key = match &layer.content {
             LayerContent::Media { media, .. } => {
                 let Some(m) = doc.media(*media) else { continue };
-                let Some((key, frame)) = fetch(m, layer.media_time(t)) else { continue };
+                let Some((key, frame)) = fetch(m, layer.media_time(t)) else {
+                    continue;
+                };
                 if !gpu.has_source(key, 0) {
                     gpu.upload(key, 0, frame.width, frame.height, &frame.pixels);
                 }
                 key
             }
             LayerContent::Paint { .. } => {
-                let Some(r) = paint.get(&layer.id) else { continue };
+                let Some(r) = paint.get(&layer.id) else {
+                    continue;
+                };
                 let key = paint_key(layer.id);
                 if !gpu.has_source(key, r.revision) {
                     let f = r.to_frame();
@@ -358,8 +390,34 @@ pub fn composite(
             _ => None,
         };
         let matrix = layer.transform.matrix(t, size);
+        // Same lens blur as the background where this layer stands (its feet).
+        let mut focus_blur = 0.0f32;
+        if layer.fx.follow_scene_focus
+            && let Some((bm, bsize, bid)) = scene_dof
+            && let (Some(bl), Some(depth)) = (doc.layer(bid), depths.get(&bid))
+        {
+            let feet = matrix.transform_point2(Vec2::new(size.x * 0.5, size.y * layer.fx.shadow.ground));
+            let src = bm.inverse().transform_point2(feet);
+            let (u, v) = (src.x / bsize.x, src.y / bsize.y);
+            if (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v) {
+                let x = ((u * depth.width as f32) as u32).min(depth.width - 1);
+                let y = ((v * depth.height as f32) as u32).min(depth.height - 1);
+                let d = depth.data[(y * depth.width + x) as usize][0];
+                let lens = &bl.fx.lens;
+                let range = lens.focus_range;
+                let off = ((d - lens.focus.at(t)).abs() - range).max(0.0) / (1.0 - range).max(1e-3);
+                focus_blur = (off * 2.0).clamp(0.0, 1.0) * lens.dof_amount.at(t);
+            }
+        }
+        if layer.fx.lens.dof && depth_key_exists(layer, depths) {
+            scene_dof = Some((matrix, size, layer.id));
+        }
         let mut fx = fx_sample(&layer.fx, t, doc.canvas.fps, normals_key.is_some());
         // "Shadows on me": the scene's light map, read through the cast-shadow projection.
+        if focus_blur > 0.25 {
+            let f = fx.get_or_insert_with(|| FxSample { scale: [0.0; 4], ..Default::default() });
+            f.wrap[2] = f.wrap[2].max(focus_blur);
+        }
         let dapple = &layer.fx.dapple;
         let mut light = None;
         if dapple.enabled
@@ -391,6 +449,7 @@ pub fn composite(
                 contact_opacity: s.contact.at(t),
                 color: s.color,
                 follow_light: light.is_some() && dapple.shadow_follows,
+                shape: body_shadow_key(gpu, layer, t, size, &mut keep),
             }
         });
         let graded = layer.grade.enabled && !layer.grade.is_identity();

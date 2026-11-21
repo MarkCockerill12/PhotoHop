@@ -25,7 +25,23 @@ fn normal_over_and_multiply() {
     let mut c = Compositor::new(&device, &queue);
     c.upload(1, 0, 4, 4, &solid(4, 4, [1.0, 0.0, 0.0, 0.5]));
     let full = Affine2::from_translation(Vec2::ZERO);
-    let draw = |blend| LayerDraw { source: 1, size: Vec2::new(4.0, 4.0), matrix: full, opacity: 1.0, blend, mask: None, mask_invert: false, mask_srgb: false, grade: None, curves: None, fx: None, normals: None, shadow: None, light: None, depth: None };
+    let draw = |blend| LayerDraw {
+        source: 1,
+        size: Vec2::new(4.0, 4.0),
+        matrix: full,
+        opacity: 1.0,
+        blend,
+        mask: None,
+        mask_invert: false,
+        mask_srgb: false,
+        grade: None,
+        curves: None,
+        fx: None,
+        normals: None,
+        shadow: None,
+        light: None,
+        depth: None,
+    };
 
     c.render(4, 4, [0.0, 0.0, 1.0, 1.0], &[draw(BlendMode::Normal)]);
     let (_, _, px) = c.read_back().unwrap();
@@ -141,10 +157,7 @@ fn curves_and_qualifier() {
         [px[0].to_f32(), px[1].to_f32(), px[2].to_f32()]
     };
     // Curves: master pulled to 0 -> black.
-    let g = ph_core::Grade {
-        curves: ph_core::Curves { master: vec![[0.0, 0.0], [1.0, 0.0]], ..Default::default() },
-        ..Default::default()
-    };
+    let g = ph_core::Grade { curves: ph_core::Curves { master: vec![[0.0, 0.0], [1.0, 0.0]], ..Default::default() }, ..Default::default() };
     let p = px0(&mut c, draw(g));
     assert!(p.iter().all(|v| v.abs() < 0.01), "flat-zero curve {p:?}");
     // Qualifier on red, shift hue by 1/3 turn -> red becomes green-dominant.
@@ -198,6 +211,7 @@ fn shadow_and_light_wrap() {
         contact_opacity: 0.0,
         color: [0.0; 3],
         follow_light: false,
+        shape: None,
     };
     c.render(32, 32, [0.5, 0.5, 0.5, 1.0], &[LayerDraw { shadow: Some(shadow), ..base() }]);
     let (_, _, px) = c.read_back().unwrap();
@@ -212,4 +226,49 @@ fn shadow_and_light_wrap() {
     let (_, _, px) = c.read_back().unwrap();
     let (edge, centre) = (at(&px, 12, 12), at(&px, 15, 12));
     assert!(edge > 0.1 && edge > centre, "edge {edge} centre {centre}");
+}
+
+#[test]
+fn shadow_shape_is_drawn_in_layer_space() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut c = Compositor::new(&device, &queue);
+    // Invisible layer (8x8 transparent) placed at (12, 8); its shadow shape is the bottom half.
+    c.upload(1, 0, 8, 8, &solid(8, 8, [0.0, 0.0, 0.0, 0.0]));
+    let shape: Vec<half::f16> = (0..64).flat_map(|i| [0.0, 0.0, 0.0, if i / 8 >= 4 { 1.0 } else { 0.0 }].map(half::f16::from_f32)).collect();
+    c.upload(9, 0, 8, 8, &shape);
+    let shadow = ShadowDraw {
+        cast: Affine2::IDENTITY,
+        contact: Affine2::IDENTITY,
+        softness: 0.0,
+        contact_softness: 0.0,
+        opacity: 1.0,
+        contact_opacity: 0.0,
+        color: [0.0; 3],
+        follow_light: false,
+        shape: Some(9),
+    };
+    let draw = LayerDraw {
+        source: 1,
+        size: Vec2::new(8.0, 8.0),
+        matrix: Affine2::from_translation(Vec2::new(12.0, 8.0)),
+        opacity: 1.0,
+        blend: BlendMode::Normal,
+        mask: None,
+        mask_invert: false,
+        mask_srgb: false,
+        grade: None,
+        curves: None,
+        fx: None,
+        normals: None,
+        shadow: Some(shadow),
+        light: None,
+        depth: None,
+    };
+    c.render(32, 32, [0.5, 0.5, 0.5, 1.0], &[draw]);
+    let (_, _, px) = c.read_back().unwrap();
+    let at = |x: usize, y: usize| px[(y * 32 + x) * 4].to_f32();
+    assert!(at(15, 14) < 0.05, "bottom half shadowed: {}", at(15, 14));
+    assert!((at(15, 9) - 0.5).abs() < 0.01, "top half untouched: {}", at(15, 9));
 }

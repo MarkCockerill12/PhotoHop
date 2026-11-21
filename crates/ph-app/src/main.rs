@@ -7,6 +7,7 @@ mod ai;
 mod analysis;
 mod app;
 mod blender;
+mod bodyshadow;
 mod export;
 mod glass;
 mod lightmap;

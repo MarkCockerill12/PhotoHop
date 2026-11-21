@@ -57,6 +57,13 @@ def cmd_depth(args) -> dict:
     return {"output": args.output, **info}
 
 
+def cmd_body_still(args) -> dict:
+    from .body import capture_still
+
+    info = capture_still(args.input, args.mask, args.output, device=_device())
+    return {"output": args.output, **info}
+
+
 def cmd_normals(args) -> dict:
     from .normals import normals
 
@@ -175,12 +182,16 @@ def main(argv=None) -> int:
     dp = sub.add_parser("depth", help="single-image depth map (Depth Anything 3) -> 16-bit PNG, white = near")
     dp.add_argument("input")
     dp.add_argument("output")
+    bs = sub.add_parser("body-still", help="3D body from one photo (SAM 3D Body) -> body.json + body.obj")
+    bs.add_argument("input")
+    bs.add_argument("output")
+    bs.add_argument("--mask", required=True, help="the person's cut-out mask")
     args = p.parse_args(argv)
     t0 = time.time()
     try:
         cmds = {"info": cmd_info, "matte": cmd_matte, "segment": cmd_segment, "normals": cmd_normals,
                 "track": cmd_track, "video-matte": cmd_video_matte, "remove": cmd_remove,
-                "harmonize": cmd_harmonize, "camera-solve": cmd_camera, "body-motion": cmd_body, "find-glass": cmd_find_glass, "depth": cmd_depth}
+                "harmonize": cmd_harmonize, "camera-solve": cmd_camera, "body-motion": cmd_body, "find-glass": cmd_find_glass, "depth": cmd_depth, "body-still": cmd_body_still}
         result = cmds[args.cmd](args)
         result.update(ok=True, seconds=round(time.time() - t0, 2))
     except Exception as e:  # noqa: BLE001 - report every failure as JSON for the app

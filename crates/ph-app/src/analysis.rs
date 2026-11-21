@@ -85,10 +85,8 @@ impl Luma {
     pub fn noise(&self) -> f32 {
         let lo = self.box_blur(1);
         let wide = self.box_blur(4);
-        let mut cand: Vec<(f32, f32)> = (0..self.v.len())
-            .filter(|&i| self.wt[i] > 0.9)
-            .map(|i| ((lo[i] - wide[i]).abs(), (self.v[i] - lo[i]).abs()))
-            .collect();
+        let mut cand: Vec<(f32, f32)> =
+            (0..self.v.len()).filter(|&i| self.wt[i] > 0.9).map(|i| ((lo[i] - wide[i]).abs(), (self.v[i] - lo[i]).abs())).collect();
         if cand.len() < 16 {
             return 0.0;
         }
@@ -97,6 +95,76 @@ impl Luma {
         flat.sort_by(f32::total_cmp);
         flat[flat.len() / 2] * 1.4826
     }
+}
+
+impl Luma {
+    fn sample(&self, x: f32, y: f32) -> Option<f32> {
+        if x < 0.0 || y < 0.0 || x > (self.w - 1) as f32 || y > (self.h - 1) as f32 {
+            return None;
+        }
+        let (x0, y0) = (x.floor() as usize, y.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(self.w - 1), (y0 + 1).min(self.h - 1));
+        let (fx, fy) = (x - x0 as f32, y - y0 as f32);
+        let i = |xx: usize, yy: usize| yy * self.w + xx;
+        if self.wt[i(x0, y0)] < 0.9 || self.wt[i(x1, y1)] < 0.9 {
+            return None;
+        }
+        let top = self.v[i(x0, y0)] * (1.0 - fx) + self.v[i(x1, y0)] * fx;
+        let bot = self.v[i(x0, y1)] * (1.0 - fx) + self.v[i(x1, y1)] * fx;
+        Some(top * (1.0 - fy) + bot * fy)
+    }
+}
+
+/// Motion blur in `l`: (direction in degrees, 0 = horizontal, y down; length in `l` pixels).
+///
+/// A streak of length L along θ turns the derivative along θ into a pair of opposite spikes L
+/// apart, so its autocorrelation along θ dips strongly negative at lag L. The angle with the
+/// deepest dip wins; no dip below −0.15 means no motion blur.
+pub fn estimate_motion(l: &Luma) -> Option<(f32, f32)> {
+    let max_lag = 48usize.min(l.w.min(l.h) / 4);
+    if max_lag < 4 {
+        return None;
+    }
+    let mut scores = [(0.0f32, 0.0f32); 36]; // (score, length) per 5°
+    for (step, slot) in scores.iter_mut().enumerate() {
+        let ang = step as f32 * 5.0;
+        let (dx, dy) = (ang.to_radians().cos(), ang.to_radians().sin());
+        // Directional derivative on a sparse grid.
+        let deriv = |x: f32, y: f32| -> Option<f32> { Some(l.sample(x + dx * 0.5, y + dy * 0.5)? - l.sample(x - dx * 0.5, y - dy * 0.5)?) };
+        let mut r = vec![0.0f64; max_lag + 1];
+        let mut n = vec![0u32; max_lag + 1];
+        for y in (max_lag..l.h.saturating_sub(max_lag)).step_by(2) {
+            for x in (max_lag..l.w.saturating_sub(max_lag)).step_by(2) {
+                let (fx, fy) = (x as f32, y as f32);
+                let Some(d0) = deriv(fx, fy) else { continue };
+                for (k, (rk, nk)) in r.iter_mut().zip(n.iter_mut()).enumerate() {
+                    if let Some(dk) = deriv(fx + dx * k as f32, fy + dy * k as f32) {
+                        *rk += (d0 * dk) as f64;
+                        *nk += 1;
+                    }
+                }
+            }
+        }
+        if n[0] < 200 || r[0] <= 1e-12 {
+            *slot = (0.0, 0.0);
+            continue;
+        }
+        let r0 = r[0] / n[0] as f64;
+        let (mut score, mut lag) = (0.0f64, 0usize);
+        for k in 3..=max_lag {
+            if n[k] > 50 {
+                let v = r[k] / n[k] as f64 / r0;
+                if v < score {
+                    (score, lag) = (v, k);
+                }
+            }
+        }
+        *slot = (score as f32, lag as f32);
+    }
+    // Deepest dip, which must be directional: clearly deeper than at right angles.
+    let (i, &(score, len)) = scores.iter().enumerate().min_by(|a, b| a.1.0.total_cmp(&b.1.0))?;
+    let perp = scores[(i + 18) % 36].0;
+    (score < -0.15 && perp > score * 0.5).then_some((i as f32 * 5.0, len))
 }
 
 /// Blur radius (in the luma image's pixels) that brings `subject`'s detail down to `target`.
@@ -173,12 +241,69 @@ pub fn estimate_light(frame: &Frame) -> LightEstimate {
 }
 
 #[cfg(test)]
+mod motion_tests {
+    use super::*;
+
+    fn texture(w: usize, h: usize) -> Vec<f32> {
+        // Deterministic blobby texture with edges in every direction.
+        let mut v = vec![0.0f32; w * h];
+        let mut seed = 12345u32;
+        for _ in 0..400 {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            let (cx, cy) = ((seed >> 8) as usize % w, (seed >> 4) as usize % h);
+            let r = 3 + (seed >> 20) as usize % 9;
+            let val = ((seed >> 12) % 100) as f32 / 100.0;
+            for y in cy.saturating_sub(r)..(cy + r).min(h) {
+                for x in cx.saturating_sub(r)..(cx + r).min(w) {
+                    v[y * w + x] = val;
+                }
+            }
+        }
+        v
+    }
+
+    fn motion_blur(v: &[f32], w: usize, h: usize, ang: f32, len: usize) -> Vec<f32> {
+        let (dx, dy) = (ang.to_radians().cos(), ang.to_radians().sin());
+        let mut out = vec![0.0; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let mut s = 0.0;
+                for k in 0..len {
+                    let t = k as f32 - (len as f32 - 1.0) / 2.0;
+                    let (sx, sy) = ((x as f32 + dx * t).round().clamp(0.0, (w - 1) as f32), (y as f32 + dy * t).round().clamp(0.0, (h - 1) as f32));
+                    s += v[sy as usize * w + sx as usize];
+                }
+                out[y * w + x] = s / len as f32;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn finds_direction_and_length_of_a_motion_blur() {
+        let (w, h) = (320, 240);
+        let base = texture(w, h);
+        let l = Luma { w, h, v: motion_blur(&base, w, h, 30.0, 14), wt: vec![1.0; w * h] };
+        let (ang, len) = estimate_motion(&l).expect("motion found");
+        assert!((ang - 30.0).abs() <= 10.0, "angle {ang}");
+        assert!((len - 14.0).abs() <= 3.0, "length {len}");
+        let sharp = Luma { w, h, v: base, wt: vec![1.0; w * h] };
+        assert!(estimate_motion(&sharp).is_none(), "no motion in a sharp image");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use half::f16;
 
     fn frame_from(w: usize, h: usize, f: impl Fn(usize, usize) -> f32) -> Frame {
-        let px: Vec<f16> = (0..w * h).flat_map(|i| { let v = f(i % w, i / w); [v, v, v, 1.0].map(f16::from_f32) }).collect();
+        let px: Vec<f16> = (0..w * h)
+            .flat_map(|i| {
+                let v = f(i % w, i / w);
+                [v, v, v, 1.0].map(f16::from_f32)
+            })
+            .collect();
         Frame::new(w as u32, h as u32, px)
     }
 
@@ -211,9 +336,13 @@ mod real_project {
     /// Opt-in: `PHOTOHOP_TEST_PROJECT=project.phop cargo test -p photohop match_real -- --nocapture`.
     #[test]
     fn match_real() {
-        let Some(path) = std::env::var_os("PHOTOHOP_TEST_PROJECT") else { return };
+        let Some(path) = std::env::var_os("PHOTOHOP_TEST_PROJECT") else {
+            return;
+        };
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else { return };
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            return;
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
         let mut app = crate::app::App::new(&egui::Context::default(), &device, &queue);
         app.open(std::path::Path::new(&path)).unwrap();
@@ -226,5 +355,29 @@ mod real_project {
         if let Some(out) = std::env::var_os("PHOTOHOP_TEST_SAVE") {
             app.save_to(std::path::Path::new(&out)).unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod real_match {
+    /// Opt-in: `PHOTOHOP_TEST_MATCH=in.phop:out.phop` runs Match the camera on the top layer.
+    #[test]
+    fn match_camera_real() {
+        let Some(spec) = std::env::var("PHOTOHOP_TEST_MATCH").ok() else {
+            return;
+        };
+        let (inp, out) = spec.rsplit_once(':').unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+        let mut app = crate::app::App::new(&egui::Context::default(), &device, &queue);
+        app.open(std::path::Path::new(inp)).unwrap();
+        app.selected = app.doc.layers.last().map(|l| l.id);
+        let _ = app.layer_frame(app.selected.unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        eprintln!("{}", app.match_detail().unwrap());
+        app.save_to(std::path::Path::new(out)).unwrap();
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::export::ExportState;
 use crate::media_cache::MediaCache;
-use crate::paint::{BrushSettings, Patch, PaintRaster};
+use crate::paint::{BrushSettings, PaintRaster, Patch};
 use crate::render::Viewer;
 use anyhow::{Context, Result};
 use ph_core::doc::{LayerContent, MediaKind, MediaRef};
@@ -115,9 +115,7 @@ pub fn lowest_solid_row(frame: &ph_media::Frame, mask: impl Fn(f32, f32) -> f32)
     let need = (w / 200).max(2);
     for y in (0..h).rev() {
         let v = (y as f32 + 0.5) / h as f32;
-        let solid = (0..w)
-            .filter(|&x| frame.pixels[(y * w + x) * 4 + 3].to_f32() * mask((x as f32 + 0.5) / w as f32, v) > 0.5)
-            .count();
+        let solid = (0..w).filter(|&x| frame.pixels[(y * w + x) * 4 + 3].to_f32() * mask((x as f32 + 0.5) / w as f32, v) > 0.5).count();
         if solid >= need {
             return (y + 1) as f32 / h as f32;
         }
@@ -290,6 +288,7 @@ impl App {
         let assets = project_file::assets_dir(&path);
         let mut temp_files: Vec<&mut std::path::PathBuf> = self.doc.media.iter_mut().map(|m| &mut m.path).collect();
         temp_files.extend([&mut self.doc.camera_solve, &mut self.doc.body_motion].into_iter().flatten());
+        temp_files.extend(self.doc.layers.iter_mut().filter_map(|l| l.body_mesh.as_mut()));
         for path in temp_files {
             if path.starts_with(&tmp) {
                 std::fs::create_dir_all(&assets)?;
@@ -317,7 +316,8 @@ impl App {
                 let folder = assets.join(format!("sequence-{}", m.id.0));
                 std::fs::create_dir_all(&folder)?;
                 for (_, f) in &files {
-                    std::fs::copy(f, folder.join(f.file_name().context("sequence frame name")?)).context("copying image sequence into project assets")?;
+                    std::fs::copy(f, folder.join(f.file_name().context("sequence frame name")?))
+                        .context("copying image sequence into project assets")?;
                 }
                 m.path = folder.join(m.path.file_name().context("sequence pattern")?);
             }
@@ -446,7 +446,9 @@ impl App {
 
     pub fn duplicate_selected(&mut self) {
         let Some(id) = self.selected else { return };
-        let Some(idx) = self.doc.layer_index(id) else { return };
+        let Some(idx) = self.doc.layer_index(id) else {
+            return;
+        };
         let new_id = LayerId::new();
         self.edit("Duplicate layer", |doc| {
             let mut l = doc.layers[idx].clone();
@@ -471,7 +473,9 @@ impl App {
 
     /// Move a layer up (+1) or down (-1) in the stack.
     pub fn move_layer(&mut self, id: LayerId, delta: i32) {
-        let Some(i) = self.doc.layer_index(id) else { return };
+        let Some(i) = self.doc.layer_index(id) else {
+            return;
+        };
         let j = i as i32 + delta;
         if j < 0 || j >= self.doc.layers.len() as i32 {
             return;
@@ -483,7 +487,9 @@ impl App {
 
     /// Give the selected layer an all-white (fully visible) mask at its source resolution.
     pub fn add_mask(&mut self) {
-        let Some(layer) = self.selected_layer() else { return };
+        let Some(layer) = self.selected_layer() else {
+            return;
+        };
         if layer.mask.is_some() {
             return;
         }
@@ -597,34 +603,61 @@ impl App {
 
     /// Set grain and blur so the layer's noise and sharpness match the reference (no AI).
     pub fn match_detail(&mut self) -> Result<String> {
-        use crate::analysis::{Luma, blur_to_match};
+        use crate::analysis::{Luma, blur_to_match, estimate_motion};
         let id = self.selected.context("select the layer to adjust")?;
-        let reference = self.reference_for(id)?;
+        let idx = self.doc.layer_index(id).context("layer missing")?;
+        if idx == 0 {
+            anyhow::bail!("put a background layer under this one first");
+        }
         let (t, auto) = (self.time, self.auto_key);
-        let canvas_scale = |app: &App, lid: LayerId| -> f32 {
-            app.doc.layer(lid).map_or(1.0, |l| app.doc.layer_matrix(l, t).matrix2.x_axis.length())
+        // The scene around where the layer stands: everything below it, near its bounding box.
+        let below: Vec<LayerId> = self.doc.layers[..idx].iter().map(|l| l.id).collect();
+        let bg = self.composite_only(|l| below.contains(&l), None)?;
+        let layer = self.doc.layer(id).context("layer missing")?;
+        let size = self.doc.layer_source_size(layer);
+        let m = self.doc.layer_matrix(layer, t);
+        let ks = m.matrix2.x_axis.length();
+        let corners = [glam::Vec2::ZERO, glam::Vec2::new(size.x, 0.0), size, glam::Vec2::new(0.0, size.y)].map(|p| m.transform_point2(p));
+        let (lo, hi) = corners.iter().fold((glam::Vec2::splat(f32::MAX), glam::Vec2::splat(f32::MIN)), |(a, b), p| (a.min(*p), b.max(*p)));
+        let grow = (hi - lo) * 0.5;
+        let (cw, ch) = (bg.width as f32, bg.height as f32);
+        let (rx0, ry0, rx1, ry1) =
+            (((lo.x - grow.x) / cw).max(0.0), ((lo.y - grow.y) / ch).max(0.0), ((hi.x + grow.x) / cw).min(1.0), ((hi.y + grow.y) / ch).min(1.0));
+        let near = move |u: f32, v: f32| {
+            if u >= rx0 && u <= rx1 && v >= ry0 && v <= ry1 { 1.0 } else { 0.0 }
         };
-        let (ks, kr) = (canvas_scale(self, id), canvas_scale(self, reference));
+        let lr = Luma::from_frame(&bg, 1.0, &near);
+        let luma_per_canvas = lr.w as f32 / cw;
         let src = self.layer_frame(id).context("this layer has no pixels yet")?;
-        let refr = self.layer_frame(reference).context("reference has no pixels yet")?;
         let one = |_: f32, _: f32| 1.0;
-        // Compare both at the reference's on-canvas scale (that's how the viewer sees them).
-        let ls = Luma::from_frame(&src, ks, &one);
-        let lr = Luma::from_frame(&refr, kr, &one);
-        let lim = 640.0 / (src.width.max(src.height) as f32 * ks);
-        let px_per_canvas = lim.min(1.0);
-        let radius_luma = blur_to_match(&ls, lr.detail());
-        let blur_canvas = radius_luma / px_per_canvas.max(1e-3);
+        // Compare the layer at the scene's analysis scale (how it sits on the canvas).
+        let ls = Luma::from_frame(&src, ks * luma_per_canvas, &one);
+        let motion = estimate_motion(&lr);
+        let blur_canvas = if motion.is_some() { 0.0 } else { blur_to_match(&ls, lr.detail()) / luma_per_canvas.max(1e-3) };
         let (ns, nr) = (ls.noise(), lr.noise());
         let grain = ((nr * nr - ns * ns).max(0.0)).sqrt() / 0.408;
-        self.edit("Match grain & sharpness", |d| {
+        let grain_size = (1.0 / luma_per_canvas.max(1e-3)).clamp(0.75, 4.0).min(2.5);
+        self.edit("Match the camera", |d| {
             if let Some(l) = d.layer_mut(id) {
                 l.fx.blur.set(t, blur_canvas.min(40.0), auto);
                 l.fx.grain.set(t, grain.min(0.15), auto);
-                l.fx.grain_size = (1.0 / kr.max(1e-3)).clamp(0.75, 4.0);
+                l.fx.grain_size = grain_size;
+                if let Some((ang, len)) = motion {
+                    l.fx.motion_blur.set(t, len / luma_per_canvas.max(1e-3), auto);
+                    l.fx.motion_angle = ang;
+                } else {
+                    l.fx.motion_blur.set(t, 0.0, auto);
+                }
             }
         });
-        Ok(format!("Matched detail: blur {blur_canvas:.1}px, grain {grain:.3} (background noise {nr:.3}, yours {ns:.3})."))
+        Ok(match motion {
+            Some((ang, len)) => {
+                format!("Matched the camera: motion blur {:.0}px at {ang:.0}°, grain {grain:.3}.", len / luma_per_canvas.max(1e-3))
+            }
+            None => format!(
+                "Matched the camera: softness {blur_canvas:.1}px, grain {grain:.3} (scene noise {nr:.3}, yours {ns:.3}); no motion blur found."
+            ),
+        })
     }
 
     /// Set the relight colour, ambient and direction from the reference's light (no AI).

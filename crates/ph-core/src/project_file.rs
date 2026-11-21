@@ -42,6 +42,11 @@ pub fn save(doc: &Project, path: &Path) -> Result<()> {
     for c in [&mut out.camera_solve, &mut out.body_motion].into_iter().flatten() {
         *c = relativize(c, base);
     }
+    for l in &mut out.layers {
+        if let Some(b) = &mut l.body_mesh {
+            *b = relativize(b, base);
+        }
+    }
     let json = serde_json::to_string_pretty(&out)?;
     let tmp = path.with_extension("phop.tmp");
     std::fs::write(&tmp, json).with_context(|| format!("writing {}", tmp.display()))?;
@@ -66,6 +71,13 @@ pub fn load(path: &Path) -> Result<Project> {
             *c = base.join(&*c);
         }
     }
+    for l in &mut doc.layers {
+        if let Some(b) = &mut l.body_mesh
+            && b.is_relative()
+        {
+            *b = base.join(&*b);
+        }
+    }
     Ok(doc)
 }
 
@@ -79,13 +91,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("phop-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut doc = Project::new("t", 64, 64, 24.0, 1.0);
-        doc.media.push(MediaRef {
-            id: MediaId::new(),
-            path: dir.join("a.png"),
-            kind: MediaKind::Image,
-            width: 4,
-            height: 4,
-        });
+        doc.media.push(MediaRef { id: MediaId::new(), path: dir.join("a.png"), kind: MediaKind::Image, width: 4, height: 4 });
         let file = dir.join("p.phop");
         save(&doc, &file).unwrap();
         assert!(std::fs::read_to_string(&file).unwrap().contains("\"a.png\""));

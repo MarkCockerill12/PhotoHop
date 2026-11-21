@@ -102,7 +102,7 @@ pub fn integration_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
     egui::CollapsingHeader::new("Integration").default_open(true).show(ui, |ui| {
         ui.label(egui::RichText::new("Make the layer sit in the scene").weak());
         ui.horizontal(|ui| {
-            if ui.button("Match grain & sharpness").on_hover_text("Measure the background's noise and softness and copy them (no AI)").clicked() {
+            if ui.button("Match the camera").on_hover_text("Measure the grain, softness and motion blur of the background around you and copy them (no AI)").clicked() {
                 app.status = app.match_detail().unwrap_or_else(|e| format!("Match failed: {e:#}"));
             }
             if ui.button("Match light").on_hover_text("Estimate the scene's light colour, ambient and direction for Relight (no AI)").clicked() {
@@ -114,11 +114,21 @@ pub fn integration_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
             plain_row(app, ui, id, "Wrap width", fx.light_wrap_width, 1.0..=120.0, |l, v| l.fx.light_wrap_width = v);
             anim_row(app, ui, id, "Blur", fx.blur.at(t), 0.0..=40.0, |l| &mut l.fx.blur);
             anim_row(app, ui, id, "Sharpen", fx.sharpen.at(t), 0.0..=2.0, |l| &mut l.fx.sharpen);
+            anim_row(app, ui, id, "Motion blur", fx.motion_blur.at(t), 0.0..=120.0, |l| &mut l.fx.motion_blur);
+            plain_row(app, ui, id, "Motion angle", fx.motion_angle, -180.0..=180.0, |l, v| l.fx.motion_angle = v);
             anim_row(app, ui, id, "Grain", fx.grain.at(t), 0.0..=0.15, |l| &mut l.fx.grain);
             plain_row(app, ui, id, "Grain size", fx.grain_size, 0.5..=6.0, |l, v| l.fx.grain_size = v);
             anim_row(app, ui, id, "Haze", fx.haze.at(t), 0.0..=1.0, |l| &mut l.fx.haze);
             colour_row(app, ui, id, "Haze colour", fx.haze_color, |l, v| l.fx.haze_color = v);
         });
+        let mut follow = fx.follow_scene_focus;
+        if ui
+            .checkbox(&mut follow, "Blur me like the background's depth of field")
+            .on_hover_text("If the layer below has depth of field, you get the same blur as the ground where you stand")
+            .changed()
+        {
+            app.edit("Follow scene focus", |d| d.layer_mut(id).map_or((), |l| l.fx.follow_scene_focus = follow));
+        }
         let mut mono = fx.grain_mono;
         if ui.checkbox(&mut mono, "Monochrome grain").changed() {
             app.edit("Grain colour", |d| d.layer_mut(id).map_or((), |l| l.fx.grain_mono = mono));
@@ -190,6 +200,23 @@ pub fn integration_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
             }
         });
         if s.enabled {
+            ui.horizontal(|ui| {
+                let label = if layer.body_mesh.is_some() { "Rebuild 3D body (AI)" } else { "Body-shaped shadow (AI)" };
+                if ui
+                    .add_enabled(!app.ai_running(), egui::Button::new(label))
+                    .on_hover_text("Rebuilds your body in 3D from the photo so the shadow has your real shape and starts at your feet")
+                    .clicked()
+                    && let Err(e) = app.start_ai(crate::ai::AiTask::BodyShape)
+                {
+                    app.status = format!("AI: {e:#}");
+                }
+                if layer.body_mesh.is_some() {
+                    let mut on = s.body_shape;
+                    if ui.checkbox(&mut on, "Use 3D body").changed() {
+                        app.edit("Body-shaped shadow", |d| d.layer_mut(id).map_or((), |l| l.fx.shadow.body_shape = on));
+                    }
+                }
+            });
             egui::Grid::new("shadow_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
                 anim_row(app, ui, id, "Direction", s.angle.at(t), -180.0..=180.0, |l| &mut l.fx.shadow.angle);
                 anim_row(app, ui, id, "Length", s.length.at(t), 0.0..=3.0, |l| &mut l.fx.shadow.length);

@@ -158,3 +158,38 @@ def capture(video: str, mask_video: str, out: str, camera: str | None = None, de
     }
     out_json.write_text(json.dumps(result))
     return {"frames": len(verts), "detected": found, "vertices": int(verts.shape[1]), "distance_m": round(float(np.median(verts[0][:, 2])), 2)}
+
+
+def capture_still(image: str, mask: str, out: str, device: str = "cuda") -> dict:
+    """3D body of the person in one photo (for body-shaped shadows): body.json + body.obj, camera
+    space of the photo (OpenCV axes, metres), with the photo's intrinsics."""
+    import cv2
+    from PIL import Image
+
+    repo = ensure_repo("sam-3d-body", REPO_ZIP, "sam_3d_body/sam_3d_body_estimator.py")
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+    from sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body_hf
+
+    img = cv2.imread(image, cv2.IMREAD_COLOR)[:, :, ::-1].copy()
+    h, w = img.shape[:2]
+    m = np.asarray(Image.open(mask).convert("L").resize((w, h))) > 128
+    if m.sum() < 100:
+        raise RuntimeError("the layer has no cut-out mask; cut yourself out first")
+    ys, xs = np.nonzero(m)
+    box = np.array([[xs.min(), ys.min(), xs.max(), ys.max()]], np.float32)
+    model, cfg = load_sam_3d_body_hf(MODEL_ID)
+    est = SAM3DBodyEstimator(model.to(device).eval(), cfg)
+    res = est.process_one_image(img, bboxes=box)
+    if not res:
+        raise RuntimeError("no body found in the photo")
+    o = res[0]
+    verts = np.asarray(o["pred_vertices"], np.float32) + np.asarray(o["pred_cam_t"], np.float32)
+    focal = float(o["focal_length"])
+    out_json = Path(out)
+    obj = out_json.with_suffix(".obj")
+    _write_obj(obj, verts, np.asarray(est.faces))
+    out_json.write_text(json.dumps({"photohop_body_still": 1, "width": w, "height": h,
+                                    "intrinsics": {"fx": focal, "fy": focal, "cx": w / 2, "cy": h / 2},
+                                    "mesh": obj.name, "convention": "opencv camera space, metres"}))
+    return {"vertices": len(verts), "height_m": round(float(verts[:, 1].max() - verts[:, 1].min()), 2)}

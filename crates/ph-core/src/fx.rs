@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct Shadow {
     pub enabled: bool,
+    /// Cast the 3D body's real shadow when the layer has one (else the flat silhouette).
+    #[serde(default = "yes")]
+    pub body_shape: bool,
     /// Direction the shadow falls, degrees on screen (0 = right, 90 = towards the viewer/down).
     pub angle: Animated<f32>,
     /// Shadow length relative to the subject's height.
@@ -24,10 +27,15 @@ pub struct Shadow {
     pub ground: f32,
 }
 
+fn yes() -> bool {
+    true
+}
+
 impl Default for Shadow {
     fn default() -> Self {
         Self {
             enabled: false,
+            body_shape: true,
             angle: Animated::new(60.0),
             length: Animated::new(0.6),
             softness: Animated::new(12.0),
@@ -133,6 +141,11 @@ pub struct LayerFx {
     pub blur: Animated<f32>,
     /// Unsharp-mask amount (0..2).
     pub sharpen: Animated<f32>,
+    /// Motion blur: streak length in canvas pixels and direction (degrees, 0 = horizontal).
+    pub motion_blur: Animated<f32>,
+    pub motion_angle: f32,
+    /// Blur the layer like the background's depth of field at the layer's feet.
+    pub follow_scene_focus: bool,
     /// Film grain strength (perceptual units) and size in canvas pixels.
     pub grain: Animated<f32>,
     pub grain_size: f32,
@@ -224,6 +237,9 @@ impl Default for LayerFx {
             light_wrap_width: 24.0,
             blur: Animated::new(0.0),
             sharpen: Animated::new(0.0),
+            motion_blur: Animated::new(0.0),
+            motion_angle: 0.0,
+            follow_scene_focus: true,
             grain: Animated::new(0.0),
             grain_size: 1.5,
             grain_mono: false,

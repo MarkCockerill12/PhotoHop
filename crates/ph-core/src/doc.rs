@@ -161,6 +161,9 @@ pub struct Layer {
     /// "Replace window / screen" settings, when used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glass: Option<crate::glass::Glass>,
+    /// 3D body rebuilt from this layer's photo (body.json + body.obj), for body-shaped shadows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_mesh: Option<std::path::PathBuf>,
 }
 
 impl Layer {
@@ -184,6 +187,7 @@ impl Layer {
             roto: Vec::new(),
             patch_of: None,
             glass: None,
+            body_mesh: None,
         }
     }
 
@@ -267,13 +271,8 @@ impl Project {
     /// Pixel size of a layer's source rectangle.
     pub fn layer_source_size(&self, layer: &Layer) -> Vec2 {
         match &layer.content {
-            LayerContent::Media { media, .. } => self
-                .media(*media)
-                .map(|m| Vec2::new(m.width as f32, m.height as f32))
-                .unwrap_or(Vec2::ONE),
-            LayerContent::Paint { width, height } | LayerContent::Solid { width, height, .. } => {
-                Vec2::new(*width as f32, *height as f32)
-            }
+            LayerContent::Media { media, .. } => self.media(*media).map(|m| Vec2::new(m.width as f32, m.height as f32)).unwrap_or(Vec2::ONE),
+            LayerContent::Paint { width, height } | LayerContent::Solid { width, height, .. } => Vec2::new(*width as f32, *height as f32),
         }
     }
 

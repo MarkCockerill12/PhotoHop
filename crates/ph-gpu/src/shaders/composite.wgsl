@@ -57,6 +57,7 @@ struct FxParams {
     dapple4: vec4<f32>,   // softness (canvas px), enabled, 0, 0
     lens0: vec4<f32>,     // depth of field: max blur (canvas px), focus depth, sharp range, enabled
     lens1: vec4<f32>,     // bloom amount, bloom threshold, bloom size (canvas px), chromatic aberration (canvas px)
+    motion: vec4<f32>,    // motion blur length (canvas px), direction (radians)
 };
 @group(0) @binding(7) var<uniform> FX: FxParams;
 @group(0) @binding(8) var normal_tex: texture_2d<f32>;
@@ -124,9 +125,12 @@ fn inside(s: vec2<f32>) -> bool {
     return s.x >= 0.0 && s.y >= 0.0 && s.x <= P.src_size.x && s.y <= P.src_size.y;
 }
 
+// Layer pixels with the mask already applied, so blurs smear the cut-out, not what was around it.
 fn sample_src(s: vec2<f32>) -> vec4<f32> {
     if (!inside(s)) { return vec4<f32>(0.0); }
-    return textureSampleLevel(src_tex, src_sampler, s / P.src_size, 0.0);
+    let uv = s / P.src_size;
+    var c = textureSampleLevel(src_tex, src_sampler, uv, 0.0);
+    return c;
 }
 
 /// Layer alpha (with mask) at a canvas position, unblurred — used for light wrap.
@@ -304,7 +308,7 @@ fn sample_layer(p: vec2<f32>) -> vec4<f32> {
         return vec4<f32>(0.0);
     }
     let uv = s / P.src_size;
-    var c = textureSampleLevel(src_tex, src_sampler, uv, 0.0);
+    var c = sample_src(s);
     var blur_px = FX.wrap.z * FX.scale.x;
     if (FX.scale.y > 0.5 && FX.lens0.w > 0.5) {
         // Depth of field: the blur grows with the distance (in depth-map units) from the focus.
@@ -312,7 +316,26 @@ fn sample_layer(p: vec2<f32>) -> vec4<f32> {
         let off = max(abs(d - FX.lens0.y) - FX.lens0.z, 0.0) / max(1.0 - FX.lens0.z, 1e-3);
         blur_px = max(blur_px, clamp(off * 2.0, 0.0, 1.0) * FX.lens0.x * FX.scale.x);
     }
-    if (FX.scale.y > 0.5 && blur_px > 0.25) {
+    let motion_px = FX.motion.x * FX.scale.x;
+    if (FX.scale.y > 0.5 && motion_px > 0.5) {
+        // Motion blur: average along the streak (rotated by the layer's own transform, which the
+        // source-space step already includes).
+        let dir = vec2<f32>(cos(FX.motion.y), sin(FX.motion.y));
+        let m = P.inv0.xy * dir.x + P.inv1.xy * dir.y;
+        let step_src = normalize(m) * motion_px;
+        var acc = vec4<f32>(0.0);
+        for (var i = 0u; i < 32u; i++) {
+            let t = (f32(i) + 0.5) / 32.0 - 0.5;
+            acc += sample_src(s + step_src * t);
+        }
+        c = acc / 32.0;
+        if (blur_px > 0.25) {
+            var acc2 = c;
+            let rot = hash2(p) * 6.2831853;
+            for (var i = 0u; i < TAPS; i++) { acc2 += sample_src(s + disk_n(i, TAPS, rot) * blur_px); }
+            c = mix(c, acc2 / f32(TAPS + 1u), 0.5);
+        }
+    } else if (FX.scale.y > 0.5 && blur_px > 0.25) {
         // Lens blur: more taps for big radii, rotated per pixel so it never bands.
         var n = TAPS;
         if (blur_px > 3.0) { n = LENS_TAPS; }
