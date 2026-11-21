@@ -5,6 +5,15 @@ and make it look like you were actually there. PhotoHop is a focused photo **and
 cut yourself out, place yourself in the new background, then match lighting, colour, shadows, grain
 and lens look so the result reads as one image.
 
+![A studio photo placed into a game level: relit, with a shadow, glowing lights and depth of field](docs/images/composite-game.jpg)
+
+| The app | Replace window / screen |
+|---|---|
+| ![PhotoHop's window with the Integration panel](docs/images/app-integration.jpg) | ![A room before and after replacing the window view](docs/images/replace-window.jpg) |
+
+*Example images were generated for the docs.*
+
+
 It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow this job needs.
 
 > **Status: feature-complete for the core workflow** (v0.4): editing, masks and roto, grading and
@@ -33,6 +42,9 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
 - **Shadows on me** (Integration): leaf or window shadows in the scene fall on you too. PhotoHop
   reads where the ground is sunlit and looks it up along your cast-shadow direction from the bottom
   of your silhouette, so the gaps in the leaves line up; your own shadow only darkens sunlit ground
+- **Lens** (Integration): depth of field from an AI depth map (click to pick the focus), bloom around
+  bright lights and colour fringing, to make a too-clean background look photographed; Replace window
+  gets *Match the camera* (softness and noise of your shot), out of focus, haze, grain and glow
 - Bezier roto shapes (P): click points, drag curve handles, close on the first point; Add / Subtract,
   invert, feather, opacity; keyframe the whole shape (◆) so it follows motion. Combined with AI / painted masks
 - Scopes (S): waveform, RGB parade, vectorscope with skin-tone line, histogram
