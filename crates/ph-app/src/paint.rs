@@ -96,6 +96,28 @@ impl PaintRaster {
         Ok(Self::from_frame(&ph_media::load_image(path)?))
     }
 
+    /// Load a data map (depth) stored as plain values: undo the sRGB decoding images get.
+    pub fn load_data(path: &Path) -> anyhow::Result<Self> {
+        let mut r = Self::load(path)?;
+        for px in &mut r.data {
+            for c in px.iter_mut().take(3) {
+                *c = ph_media::color::linear_to_srgb(c.max(0.0));
+            }
+        }
+        Ok(r)
+    }
+
+    /// Save a data map so `load_data` reads back the same values.
+    pub fn save_data(&self, path: &Path) -> anyhow::Result<()> {
+        let mut copy = self.duplicate();
+        for px in &mut copy.data {
+            for c in px.iter_mut().take(3) {
+                *c = ph_media::color::srgb_to_linear(c.clamp(0.0, 1.0));
+            }
+        }
+        copy.save(path)
+    }
+
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -228,5 +250,26 @@ mod tests {
         assert_eq!(r.data[(10 * 64 + 30) as usize][3], 0.0);
         r.swap_patch(redo);
         assert!(r.data[(10 * 64 + 30) as usize][3] > 0.9);
+    }
+}
+
+#[cfg(test)]
+mod data_roundtrip {
+    use super::PaintRaster;
+
+    #[test]
+    fn depth_values_survive_save_and_load() {
+        let mut r = PaintRaster::new(4, 1);
+        for (i, px) in r.data.iter_mut().enumerate() {
+            let v = [0.0, 0.11, 0.5, 0.93][i];
+            *px = [v, v, v, 1.0];
+        }
+        let path = std::env::temp_dir().join(format!("photohop-depth-{}.png", std::process::id()));
+        r.save_data(&path).unwrap();
+        let back = PaintRaster::load_data(&path).unwrap();
+        for (a, b) in r.data.iter().zip(&back.data) {
+            assert!((a[0] - b[0]).abs() < 0.002, "{} vs {}", a[0], b[0]);
+        }
+        let _ = std::fs::remove_file(path);
     }
 }

@@ -266,7 +266,7 @@ impl App {
                 self.normals.insert(l.id, r);
             }
             if l.has_depth
-                && let Ok(r) = PaintRaster::load(&project_file::depth_path(path, l.id))
+                && let Ok(r) = PaintRaster::load_data(&project_file::depth_path(path, l.id))
             {
                 self.depths.insert(l.id, r);
             }
@@ -335,7 +335,7 @@ impl App {
         }
         for (id, raster) in &self.depths {
             if self.doc.layer(*id).is_some_and(|l| l.has_depth) {
-                raster.save(&project_file::depth_path(&path, *id)).context("saving depth map")?;
+                raster.save_data(&project_file::depth_path(&path, *id)).context("saving depth map")?;
             }
         }
         for (id, raster) in &self.masks {
