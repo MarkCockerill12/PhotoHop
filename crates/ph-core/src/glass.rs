@@ -29,6 +29,14 @@ pub struct Glass {
     pub tint: [f32; 3],
     /// Brightness of the view (gain).
     pub brightness: Animated<f32>,
+    /// The camera was focused on the room, not the view: lens blur in canvas pixels.
+    pub defocus: Animated<f32>,
+    /// Dirt / distance haze over the view (0..1), towards the glass tint.
+    pub haze: Animated<f32>,
+    /// Sensor noise on the view, to match the shot (perceptual units).
+    pub grain: Animated<f32>,
+    /// Glow around bright lights in the view.
+    pub bloom: Animated<f32>,
 }
 
 impl Default for Glass {
@@ -47,6 +55,10 @@ impl Default for Glass {
             reflection: Animated::new(0.6),
             tint: [1.0, 1.0, 1.0],
             brightness: Animated::new(1.0),
+            defocus: Animated::new(0.0),
+            haze: Animated::new(0.0),
+            grain: Animated::new(0.0),
+            bloom: Animated::new(0.0),
         }
     }
 }

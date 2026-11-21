@@ -119,7 +119,8 @@ fn fx_sample(fx: &ph_core::LayerFx, t: f64, fps: f64, has_normals: bool) -> Opti
         || fx.pixelate >= 1.5
         || fx.posterize >= 2.0
         || r.enabled
-        || fx.dapple.enabled;
+        || fx.dapple.enabled
+        || fx.lens.is_active(t);
     if !active {
         return None;
     }
@@ -134,6 +135,8 @@ fn fx_sample(fx: &ph_core::LayerFx, t: f64, fps: f64, has_normals: bool) -> Opti
         scale: [0.0; 4],
         haze: [fx.haze_color[0], fx.haze_color[1], fx.haze_color[2], fx.haze.at(t)],
         game: [fx.pixelate, fx.posterize, 0.0, 0.0],
+        lens0: [fx.lens.dof_amount.at(t), fx.lens.focus.at(t), fx.lens.focus_range, f32::from(u8::from(fx.lens.dof))],
+        lens1: [fx.lens.bloom.at(t), fx.lens.bloom_threshold, fx.lens.bloom_size, fx.lens.chroma.at(t)],
         ..Default::default()
     })
 }
@@ -176,6 +179,8 @@ fn paint_key(id: LayerId) -> u64 {
 
 /// Upload every source visible at `t` and composite. `fetch` supplies media frames
 /// (non-blocking cache for the viewer, full-resolution blocking readers for export).
+// The four per-layer raster maps travel together; a wrapper struct would add nothing.
+#[allow(clippy::too_many_arguments)]
 pub fn composite(
     gpu: &mut Compositor,
     doc: &Project,
@@ -183,6 +188,7 @@ pub fn composite(
     paint: &HashMap<LayerId, PaintRaster>,
     masks: &HashMap<LayerId, PaintRaster>,
     normals: &HashMap<LayerId, PaintRaster>,
+    depths: &HashMap<LayerId, PaintRaster>,
     mut fetch: impl FnMut(&MediaRef, f64) -> Option<(u64, Frame)>,
 ) {
     let mut draws = Vec::new();
@@ -339,6 +345,18 @@ pub fn composite(
             }
             _ => None,
         };
+        let depth_key = match (layer.has_depth, depths.get(&layer.id)) {
+            (true, Some(r)) if layer.fx.lens.dof => {
+                let dkey = hash_of(("depth", layer.id));
+                if !gpu.has_source(dkey, r.revision) {
+                    let f = r.to_frame();
+                    gpu.upload(dkey, r.revision, f.width, f.height, &f.pixels);
+                }
+                keep.insert(dkey);
+                Some(dkey)
+            }
+            _ => None,
+        };
         let matrix = layer.transform.matrix(t, size);
         let mut fx = fx_sample(&layer.fx, t, doc.canvas.fps, normals_key.is_some());
         // "Shadows on me": the scene's light map, read through the cast-shadow projection.
@@ -405,10 +423,20 @@ pub fn composite(
                         mask_srgb: false,
                         grade: (!tint.is_identity()).then(|| tint.sample(t)),
                         curves: None,
-                        fx: None,
+                        fx: {
+                            let (defocus, haze, grain, bloom) = (g.defocus.at(t), g.haze.at(t), g.grain.at(t), g.bloom.at(t));
+                            (defocus > 0.0 || haze > 0.0 || grain > 0.0 || bloom > 0.0).then(|| FxSample {
+                                wrap: [0.0, 0.0, defocus, 0.0],
+                                grain: [grain, 1.5, 0.0, ((t * doc.canvas.fps).round() % 997.0) as f32],
+                                haze: [g.tint[0] * 0.5, g.tint[1] * 0.5, g.tint[2] * 0.5, haze],
+                                lens1: [bloom, 0.7, (doc.canvas.width.max(doc.canvas.height) as f32 * 0.012).max(4.0), 0.0],
+                                ..Default::default()
+                            })
+                        },
                         normals: None,
                         shadow: None,
                         light: None,
+                        depth: None,
                     });
                 }
             }
@@ -430,6 +458,7 @@ pub fn composite(
                     normals: None,
                     shadow: None,
                     light: None,
+                    depth: None,
                 });
             }
         }
@@ -448,6 +477,7 @@ pub fn composite(
             normals: normals_key,
             shadow,
             light,
+            depth: depth_key,
         });
     }
     gpu.retain_sources(&keep);

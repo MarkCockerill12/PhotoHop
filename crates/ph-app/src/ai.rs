@@ -30,6 +30,8 @@ pub enum AiTask {
     CameraSolve,
     /// 3D body motion of the person in a video layer (SAM 3D Body) for the Blender bridge.
     BodyMotion,
+    /// Depth map of the layer (Depth Anything 3) for depth of field.
+    Depth,
     /// Find window panes / screens (SAM 3) as glass shapes for "Replace window / screen".
     FindGlass(String),
     /// Track something in front of the glass (a box, SAM 2.1) so it stays in front of the view.
@@ -49,6 +51,7 @@ impl AiTask {
             Self::CameraSolve => "AI camera solve".into(),
             Self::BodyMotion => "AI body motion".into(),
             Self::FindGlass(_) => "AI find glass".into(),
+            Self::Depth => "AI depth".into(),
             Self::GlassFront(_) => "AI keep in front".into(),
         }
     }
@@ -203,6 +206,7 @@ impl App {
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
         let output = match &task {
             AiTask::Normals => dir.join(format!("normals-{}.png", id.0)),
+            AiTask::Depth => dir.join(format!("depth-{}-{stamp}.png", id.0)),
             AiTask::CameraSolve => dir.join(format!("camera-{stamp}.json")),
             AiTask::BodyMotion => dir.join(format!("body-{stamp}.json")),
             AiTask::FindGlass(_) => dir.join(format!("glass-{stamp}.json")),
@@ -220,6 +224,7 @@ impl App {
                 args.extend(["--prompt".into(), prompt.clone()]);
             }
             AiTask::Normals => args[0] = "normals".into(),
+            AiTask::Depth => args[0] = "depth".into(),
             AiTask::FindGlass(prompt) => {
                 args[0] = "find-glass".into();
                 args.extend(["--prompt".into(), prompt.clone()]);
@@ -468,6 +473,21 @@ impl App {
                 return Ok(format!(
                     "{} done in {:.0}s — added as a patch layer above (only the object area changes).",
                     job.task.label(),
+                    v["seconds"].as_f64().unwrap_or(0.0)
+                ));
+            }
+            if job.task == AiTask::Depth {
+                let raster = PaintRaster::load(&job.output)?;
+                let id = job.layer;
+                self.edit("AI depth", |d| {
+                    if let Some(l) = d.layer_mut(id) {
+                        l.has_depth = true;
+                        l.fx.lens.dof = true;
+                    }
+                });
+                self.depths.insert(id, raster);
+                return Ok(format!(
+                    "Depth estimated in {:.0}s — depth of field is on. Click Pick focus, then click what should be sharp.",
                     v["seconds"].as_f64().unwrap_or(0.0)
                 ));
             }

@@ -55,10 +55,22 @@ struct FxParams {
     dapple2: vec4<f32>,
     dapple3: vec4<f32>,   // shade rgb (shadow/lit ratio), strength
     dapple4: vec4<f32>,   // softness (canvas px), enabled, 0, 0
+    lens0: vec4<f32>,     // depth of field: max blur (canvas px), focus depth, sharp range, enabled
+    lens1: vec4<f32>,     // bloom amount, bloom threshold, bloom size (canvas px), chromatic aberration (canvas px)
 };
 @group(0) @binding(7) var<uniform> FX: FxParams;
 @group(0) @binding(8) var normal_tex: texture_2d<f32>;
 @group(0) @binding(9) var light_tex: texture_2d<f32>;
+@group(0) @binding(10) var depth_tex: texture_2d<f32>;
+
+const LENS_TAPS: u32 = 48u;
+
+// Vogel disk with `n` taps, rotated by `rot` radians.
+fn disk_n(i: u32, n: u32, rot: f32) -> vec2<f32> {
+    let r = sqrt((f32(i) + 0.5) / f32(n));
+    let a = f32(i) * 2.3999632 + rot;
+    return vec2<f32>(cos(a), sin(a)) * r;
+}
 
 // How lit the scene is where this subject point's shadow would land (1 = sun, 0 = shadow).
 // The point stands on the ground at the bottom of the silhouette in its own column (so a body
@@ -293,11 +305,21 @@ fn sample_layer(p: vec2<f32>) -> vec4<f32> {
     }
     let uv = s / P.src_size;
     var c = textureSampleLevel(src_tex, src_sampler, uv, 0.0);
-    let blur_px = FX.wrap.z * FX.scale.x;
+    var blur_px = FX.wrap.z * FX.scale.x;
+    if (FX.scale.y > 0.5 && FX.lens0.w > 0.5) {
+        // Depth of field: the blur grows with the distance (in depth-map units) from the focus.
+        let d = textureSampleLevel(depth_tex, src_sampler, uv, 0.0).r;
+        let off = max(abs(d - FX.lens0.y) - FX.lens0.z, 0.0) / max(1.0 - FX.lens0.z, 1e-3);
+        blur_px = max(blur_px, clamp(off * 2.0, 0.0, 1.0) * FX.lens0.x * FX.scale.x);
+    }
     if (FX.scale.y > 0.5 && blur_px > 0.25) {
+        // Lens blur: more taps for big radii, rotated per pixel so it never bands.
+        var n = TAPS;
+        if (blur_px > 3.0) { n = LENS_TAPS; }
+        let rot = hash2(p) * 6.2831853;
         var acc = c;
-        for (var i = 0u; i < TAPS; i++) { acc += sample_src(s + disk(i) * blur_px); }
-        c = acc / f32(TAPS + 1u);
+        for (var i = 0u; i < n; i++) { acc += sample_src(s + disk_n(i, n, rot) * blur_px); }
+        c = acc / f32(n + 1u);
     } else if (FX.scale.y > 0.5 && FX.wrap.w > 0.0) {
         var acc = vec4<f32>(0.0);
         for (var i = 0u; i < 8u; i++) {
@@ -305,6 +327,24 @@ fn sample_layer(p: vec2<f32>) -> vec4<f32> {
             acc += sample_src(s + vec2<f32>(cos(a), sin(a)) * 1.5 * max(FX.scale.x, 0.5));
         }
         c = max(c + FX.wrap.w * (c - acc / 8.0), vec4<f32>(0.0));
+    }
+    if (FX.scale.y > 0.5 && FX.lens1.w > 0.0) {
+        // Chromatic aberration: red and blue pulled apart towards the frame edges.
+        let dimsf = vec2<f32>(textureDimensions(dst));
+        let dir = (p - dimsf * 0.5) / max(dimsf.x, dimsf.y) * 2.0;
+        let o = dir * FX.lens1.w * FX.scale.x;
+        c = vec4<f32>(sample_src(s + o).r, c.g, sample_src(s - o).b, c.a);
+    }
+    if (FX.scale.y > 0.5 && FX.lens1.x > 0.0) {
+        // Bloom: light above the threshold spreads around bright spots.
+        let r = FX.lens1.z * FX.scale.x;
+        let rot = hash2(p + 17.0) * 6.2831853;
+        var glow = vec3<f32>(0.0);
+        for (var i = 0u; i < 24u; i++) {
+            let q = sample_src(s + disk_n(i, 24u, rot) * r);
+            glow += max(q.rgb - vec3<f32>(FX.lens1.y) * q.a, vec3<f32>(0.0));
+        }
+        c = vec4<f32>(c.rgb + glow / 24.0 * FX.lens1.x, c.a);
     }
     if (P.has_mask != 0u) { c = c * mask_value(uv); }
     return c;

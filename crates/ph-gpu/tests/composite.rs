@@ -25,7 +25,7 @@ fn normal_over_and_multiply() {
     let mut c = Compositor::new(&device, &queue);
     c.upload(1, 0, 4, 4, &solid(4, 4, [1.0, 0.0, 0.0, 0.5]));
     let full = Affine2::from_translation(Vec2::ZERO);
-    let draw = |blend| LayerDraw { source: 1, size: Vec2::new(4.0, 4.0), matrix: full, opacity: 1.0, blend, mask: None, mask_invert: false, mask_srgb: false, grade: None, curves: None, fx: None, normals: None, shadow: None, light: None };
+    let draw = |blend| LayerDraw { source: 1, size: Vec2::new(4.0, 4.0), matrix: full, opacity: 1.0, blend, mask: None, mask_invert: false, mask_srgb: false, grade: None, curves: None, fx: None, normals: None, shadow: None, light: None, depth: None };
 
     c.render(4, 4, [0.0, 0.0, 1.0, 1.0], &[draw(BlendMode::Normal)]);
     let (_, _, px) = c.read_back().unwrap();
@@ -70,6 +70,7 @@ fn grade_and_mask() {
         normals: None,
         shadow: None,
         light: None,
+        depth: None,
     };
 
     let identity = ph_core::Grade::default().sample(0.0);
@@ -132,6 +133,7 @@ fn curves_and_qualifier() {
         normals: None,
         shadow: None,
         light: None,
+        depth: None,
     };
     let px0 = |c: &mut Compositor, d: LayerDraw| {
         c.render(4, 4, [0.0; 4], &[d]);
@@ -183,6 +185,7 @@ fn shadow_and_light_wrap() {
         normals: None,
         shadow: None,
         light: None,
+        depth: None,
     };
     let at = |px: &[half::f16], x: usize, y: usize| px[(y * 32 + x) * 4].to_f32();
     // Shadow straight down (pure translation by 8px) darkens the grey background below the square.

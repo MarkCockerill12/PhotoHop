@@ -11,6 +11,7 @@ pub struct CompositeViews<'a> {
     pub mask: &'a wgpu::TextureView,
     pub normals: &'a wgpu::TextureView,
     pub light: &'a wgpu::TextureView,
+    pub depth: &'a wgpu::TextureView,
 }
 
 /// Uniform buffers bound to one layer composite pass.
@@ -117,6 +118,7 @@ impl Pipelines {
                 uniform_entry(7),
                 tex_entry(8),
                 tex_entry(9),
+                tex_entry(10),
             ],
         });
         let shadow_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -218,6 +220,7 @@ impl Pipelines {
                 wgpu::BindGroupEntry { binding: 7, resource: b.fx.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::TextureView(v.normals) },
                 wgpu::BindGroupEntry { binding: 9, resource: wgpu::BindingResource::TextureView(v.light) },
+                wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::TextureView(v.depth) },
             ],
         })
     }

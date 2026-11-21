@@ -55,6 +55,8 @@ pub struct LayerDraw {
     /// Key of an uploaded canvas-sized light map (R: 1 = sunlit, 0 = in the scene's shadow),
     /// used by the fx "Shadows on me" and by a cast shadow that follows the scene's light.
     pub light: Option<u64>,
+    /// Key of an uploaded depth map (R: 1 = near, 0 = far) for depth of field.
+    pub depth: Option<u64>,
 }
 
 /// Effect parameters for one layer at one time, laid out for the GPU (see `FxParams` in WGSL).
@@ -87,6 +89,10 @@ pub struct FxSample {
     pub dapple3: [f32; 4],
     /// softness (canvas px), enabled (0/1)
     pub dapple4: [f32; 4],
+    /// depth of field: max blur (canvas px), focus, sharp range, enabled
+    pub lens0: [f32; 4],
+    /// bloom amount, threshold, size (canvas px), chromatic aberration (canvas px)
+    pub lens1: [f32; 4],
 }
 
 /// A cast + contact shadow drawn onto the backdrop before the layer itself.
@@ -333,6 +339,7 @@ impl Compositor {
             }
             let mask_view = layer.mask.and_then(|k| self.sources.get(&k)).map(|m| &m.view);
             let light_view = layer.light.and_then(|k| self.sources.get(&k)).map(|m| &m.view);
+            let depth_view = layer.depth.and_then(|k| self.sources.get(&k)).map(|m| &m.view);
             let inv = layer.matrix.inverse();
             // Canvas pixels → source pixels (for effect radii given in canvas pixels).
             let px_scale = inv.matrix2.x_axis.length().max(1e-6);
@@ -361,6 +368,7 @@ impl Compositor {
                     mask: mask_view.unwrap_or(&self.white_view),
                     normals: &self.white_view,
                     light: light_view.unwrap_or(&self.white_view),
+                    depth: &self.white_view,
                 };
                 let bg = self.pipes.shadow_bind_group(&self.device, &views, &self.sampler, &sbuf);
                 let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("shadow"), timestamp_writes: None });
@@ -397,6 +405,9 @@ impl Compositor {
                 if light_view.is_none() {
                     f.dapple4[1] = 0.0;
                 }
+                if depth_view.is_none() {
+                    f.lens0[3] = 0.0;
+                }
                 self.pipes.uniform(&self.device, bytemuck::bytes_of(&f))
             });
             let ubuf = self.pipes.uniform(&self.device, bytemuck::bytes_of(&params));
@@ -408,6 +419,7 @@ impl Compositor {
                 mask: mask_view.unwrap_or(&self.white_view),
                 normals: normals_view.unwrap_or(&self.white_view),
                 light: light_view.unwrap_or(&self.white_view),
+                depth: depth_view.unwrap_or(&self.white_view),
             };
             let bufs = CompositeBuffers {
                 params: &ubuf,

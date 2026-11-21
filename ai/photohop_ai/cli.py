@@ -50,6 +50,13 @@ def cmd_find_glass(args) -> dict:
     return {"output": args.output, **info}
 
 
+def cmd_depth(args) -> dict:
+    from .depth import depth
+
+    info = depth(args.input, args.output, device=_device())
+    return {"output": args.output, **info}
+
+
 def cmd_normals(args) -> dict:
     from .normals import normals
 
@@ -165,12 +172,15 @@ def main(argv=None) -> int:
     fg.add_argument("input")
     fg.add_argument("output")
     fg.add_argument("--prompt", default="window pane")
+    dp = sub.add_parser("depth", help="single-image depth map (Depth Anything 3) -> 16-bit PNG, white = near")
+    dp.add_argument("input")
+    dp.add_argument("output")
     args = p.parse_args(argv)
     t0 = time.time()
     try:
         cmds = {"info": cmd_info, "matte": cmd_matte, "segment": cmd_segment, "normals": cmd_normals,
                 "track": cmd_track, "video-matte": cmd_video_matte, "remove": cmd_remove,
-                "harmonize": cmd_harmonize, "camera-solve": cmd_camera, "body-motion": cmd_body, "find-glass": cmd_find_glass}
+                "harmonize": cmd_harmonize, "camera-solve": cmd_camera, "body-motion": cmd_body, "find-glass": cmd_find_glass, "depth": cmd_depth}
         result = cmds[args.cmd](args)
         result.update(ok=True, seconds=round(time.time() - t0, 2))
     except Exception as e:  # noqa: BLE001 - report every failure as JSON for the app

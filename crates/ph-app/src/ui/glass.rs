@@ -136,9 +136,20 @@ fn panel(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
             });
         }
 
-        step(ui, 3, "Glass look");
+        step(ui, 3, "Glass and camera look");
+        if ui
+            .add_enabled(g.view.is_some(), egui::Button::new("Match the camera"))
+            .on_hover_text("Measure how soft and noisy the shot is and make the view the same, so it doesn't look too clean")
+            .clicked()
+        {
+            app.status = app.glass_match_camera(id).unwrap_or_else(|e| format!("Match the camera: {e:#}"));
+        }
         egui::Grid::new("glass_look").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
             glass_slider(app, ui, id, "Reflections", g.reflection.at(t), 0.0..=1.0, |g| &mut g.reflection);
+            glass_slider(app, ui, id, "Out of focus", g.defocus.at(t), 0.0..=40.0, |g| &mut g.defocus);
+            glass_slider(app, ui, id, "Haze / dirt", g.haze.at(t), 0.0..=1.0, |g| &mut g.haze);
+            glass_slider(app, ui, id, "Grain", g.grain.at(t), 0.0..=0.15, |g| &mut g.grain);
+            glass_slider(app, ui, id, "Glow", g.bloom.at(t), 0.0..=2.0, |g| &mut g.bloom);
             glass_slider(app, ui, id, "Brightness", g.brightness.at(t), 0.0..=2.0, |g| &mut g.brightness);
             ui.label("Tint");
             let mut rgba = egui::Rgba::from_rgb(g.tint[0], g.tint[1], g.tint[2]);

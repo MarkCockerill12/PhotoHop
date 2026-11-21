@@ -89,7 +89,7 @@ pub fn viewer(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     // Composite at the playhead (non-blocking: videos show the nearest decoded frame).
     let t = app.time;
     let media = &mut app.media;
-    render::composite(&mut app.viewer.gpu, &app.doc, t, &app.paint, &app.masks, &app.normals, |m, mt| media.frame(m, mt));
+    render::composite(&mut app.viewer.gpu, &app.doc, t, &app.paint, &app.masks, &app.normals, &app.depths, |m, mt| media.frame(m, mt));
     app.viewer.sync_texture(rs);
     if app.scopes.show {
         if let Some(img) = app.viewer.gpu.take_scope() {
@@ -138,6 +138,14 @@ fn handle_tools(app: &mut App, ui: &egui::Ui, resp: &egui::Response) {
         finish_drag(app);
     }
 
+    if resp.clicked()
+        && let Some(p) = pointer
+        && let Some(id) = app.picking_focus.take()
+    {
+        let c = app.viewer.screen_to_canvas(p);
+        app.status = app.pick_focus(id, c).unwrap_or_else(|e| format!("Pick focus: {e:#}"));
+        return;
+    }
     if resp.clicked() && let Some(p) = pointer {
         match app.tool {
             Tool::Move => app.selected = pick_layer(app, p),

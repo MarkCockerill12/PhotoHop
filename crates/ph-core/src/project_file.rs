@@ -21,6 +21,10 @@ pub fn normals_path(project_path: &Path, id: LayerId) -> PathBuf {
     assets_dir(project_path).join(format!("normals-{}.png", id.0))
 }
 
+pub fn depth_path(project_path: &Path, id: LayerId) -> PathBuf {
+    assets_dir(project_path).join(format!("depth-{}.png", id.0))
+}
+
 pub fn mask_path(project_path: &Path, id: LayerId) -> PathBuf {
     assets_dir(project_path).join(format!("mask-{}.png", id.0))
 }

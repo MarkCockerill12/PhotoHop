@@ -74,7 +74,7 @@ impl App {
             return Ok(());
         }
         let doc = only(&self.doc, |l| patches.contains(&l));
-        render::composite(&mut self.viewer.gpu, &doc, t, &self.paint, &self.masks, &self.normals, |m, mt| fetch_full(readers, stills, m, mt));
+        render::composite(&mut self.viewer.gpu, &doc, t, &self.paint, &self.masks, &self.normals, &self.depths, |m, mt| fetch_full(readers, stills, m, mt));
         let (_, _, cut) = self.viewer.gpu.read_back()?;
         for (p, c) in px.as_chunks_mut::<4>().0.iter_mut().zip(cut.as_chunks::<4>().0) {
             let keep = 1.0 - c[3].to_f32().clamp(0.0, 1.0);
@@ -89,7 +89,26 @@ impl App {
     pub fn start_blender_export(&mut self, dir: &Path) -> Result<()> {
         let id = self.selected.context("select the layer that is you (the subject) first")?;
         let layer = self.doc.layer(id).context("layer missing")?.clone();
-        let any_video = self.doc.media.iter().any(|m| m.is_video());
+        // Only media that visible layers use (deleted layers can leave media behind).
+        let used: Vec<ph_core::MediaId> = self
+            .doc
+            .layers
+            .iter()
+            .filter(|l| l.visible)
+            .flat_map(|l| {
+                let mut ids = Vec::new();
+                if let ph_core::LayerContent::Media { media, .. } = &l.content {
+                    ids.push(*media);
+                }
+                ids.extend(l.mask.as_ref().and_then(|m| m.video));
+                if let Some(g) = l.glass.as_ref().filter(|g| g.enabled) {
+                    ids.extend(g.view);
+                    ids.extend(g.front.iter().copied());
+                }
+                ids
+            })
+            .collect();
+        let any_video = self.doc.media.iter().any(|m| used.contains(&m.id) && m.is_video());
         let total = if any_video { self.doc.canvas.frame_count() } else { 1 };
         std::fs::create_dir_all(dir.join("subject"))?;
         std::fs::create_dir_all(dir.join("background"))?;
@@ -154,7 +173,7 @@ impl App {
                 for (part, keep_subject) in [("subject", true), ("background", false)] {
                     let doc = only(&self.doc, |l| (l == job.subject) == keep_subject);
                     let (readers, stills) = (&mut job.readers, &mut job.stills);
-                    render::composite(&mut self.viewer.gpu, &doc, t, &self.paint, &self.masks, &self.normals, |m, mt| {
+                    render::composite(&mut self.viewer.gpu, &doc, t, &self.paint, &self.masks, &self.normals, &self.depths, |m, mt| {
                         fetch_full(readers, stills, m, mt)
                     });
                     let (w, h, mut px) = self.viewer.gpu.read_back()?;

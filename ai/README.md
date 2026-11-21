@@ -22,6 +22,8 @@ Then point PhotoHop at the environment's Python (AI ▸ Settings, or `PHOTOHOP_A
 | `harmonize COMP MASK OUT` | Harmonizer (CC BY-NC-SA, downloaded on first use, ~20 MB) | AI auto-colour: predicts temperature / brightness / contrast / saturation / highlight / shadow; PhotoHop fits its own curves to the change |
 | `camera-solve IN.mp4 camera.json` | Depth Anything 3 (DA3 Nested Giant: CC BY-NC; DA3 Base/Metric: Apache-2.0) | per-frame 3D camera (metric), lens and ground plane for the Blender bridge |
 | `body-motion IN.mp4 body.json --mask M.mp4` | SAM 3D Body (SAM License; code + weights downloaded on first use) | per-frame 3D body mesh (Blender Mesh Cache .pc2) and hand tracks for props |
+| `depth IN OUT.png` | Depth Anything 3 | depth map for depth of field (white = near) |
+| `find-glass IN OUT.json --prompt "window pane"` | SAM 3 + OpenCV | glass panes as polygons for Replace window / screen |
 | `segment IN OUT --prompt "person"` | SAM 3 (Meta SAM licence, gated: accept on Hugging Face and run `hf auth login`) | any text prompt, e.g. "toy gun" |
 
 Video commands need two extra packages (install without dependencies to avoid build tools):

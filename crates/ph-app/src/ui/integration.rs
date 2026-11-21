@@ -124,6 +124,42 @@ pub fn integration_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
             app.edit("Grain colour", |d| d.layer_mut(id).map_or((), |l| l.fx.grain_mono = mono));
         }
 
+        egui::CollapsingHeader::new("Lens (depth of field, bloom)").default_open(fx.lens.is_active(t)).show(ui, |ui| {
+            ui.label(egui::RichText::new("Make a too-clean background look photographed").weak());
+            let lens = &fx.lens;
+            ui.horizontal(|ui| {
+                let mut on = lens.dof;
+                if ui.checkbox(&mut on, egui::RichText::new("Depth of field").strong()).changed() {
+                    app.edit("Depth of field", |d| d.layer_mut(id).map_or((), |l| l.fx.lens.dof = on));
+                }
+                let label = if layer.has_depth { "Re-estimate depth (AI)" } else { "Estimate depth (AI)" };
+                if ui.add_enabled(!app.ai_running(), egui::Button::new(label)).clicked()
+                    && let Err(e) = app.start_ai(crate::ai::AiTask::Depth)
+                {
+                    app.status = format!("AI: {e:#}");
+                }
+            });
+            if lens.dof {
+                if !layer.has_depth {
+                    ui.label(egui::RichText::new("Needs a depth map: click Estimate depth.").small().color(egui::Color32::from_rgb(255, 196, 64)));
+                } else if ui.button("Pick focus").on_hover_text("Then click the thing that should be sharp").clicked() {
+                    app.picking_focus = Some(id);
+                    app.status = "Click what should be in focus.".into();
+                }
+                egui::Grid::new("dof_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
+                    anim_row(app, ui, id, "Blur amount", lens.dof_amount.at(t), 0.0..=60.0, |l| &mut l.fx.lens.dof_amount);
+                    anim_row(app, ui, id, "Focus", lens.focus.at(t), 0.0..=1.0, |l| &mut l.fx.lens.focus);
+                    plain_row(app, ui, id, "Sharp range", lens.focus_range, 0.0..=0.5, |l, v| l.fx.lens.focus_range = v);
+                });
+            }
+            egui::Grid::new("lens_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
+                anim_row(app, ui, id, "Bloom", lens.bloom.at(t), 0.0..=2.0, |l| &mut l.fx.lens.bloom);
+                plain_row(app, ui, id, "Bloom size", lens.bloom_size, 2.0..=150.0, |l, v| l.fx.lens.bloom_size = v);
+                plain_row(app, ui, id, "Bloom from", lens.bloom_threshold, 0.0..=4.0, |l, v| l.fx.lens.bloom_threshold = v);
+                anim_row(app, ui, id, "Colour fringing", lens.chroma.at(t), 0.0..=12.0, |l| &mut l.fx.lens.chroma);
+            });
+        });
+
         egui::CollapsingHeader::new("Game-ify").default_open(false).show(ui, |ui| {
             ui.label(egui::RichText::new("Make yourself look like part of the game's graphics").weak());
             egui::Grid::new("game_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {

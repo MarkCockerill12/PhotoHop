@@ -133,6 +133,51 @@ pub struct LayerFx {
     pub relight: Relight,
     /// Shadows that fall on the layer, read from the scene's own shadows (sun through leaves).
     pub dapple: Dapple,
+    /// Camera lens look: depth of field, bloom, chromatic aberration.
+    pub lens: Lens,
+}
+
+/// Lens effects that make a too-clean image look photographed: depth of field from an AI depth
+/// map, glow around bright lights, and colour fringing towards the frame edges.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Lens {
+    /// Depth of field (needs the layer's depth map).
+    pub dof: bool,
+    /// Largest blur in canvas pixels, reached far from the focus.
+    pub dof_amount: Animated<f32>,
+    /// Focus depth (0 = far, 1 = near; the depth map's scale).
+    pub focus: Animated<f32>,
+    /// Depth band around the focus that stays sharp (0..1).
+    pub focus_range: f32,
+    /// Glow around bright parts (0..2) and its size in canvas pixels.
+    pub bloom: Animated<f32>,
+    pub bloom_size: f32,
+    /// Brightness above which things glow (linear).
+    pub bloom_threshold: f32,
+    /// Colour fringing at the frame edges, canvas pixels.
+    pub chroma: Animated<f32>,
+}
+
+impl Default for Lens {
+    fn default() -> Self {
+        Self {
+            dof: false,
+            dof_amount: Animated::new(12.0),
+            focus: Animated::new(0.8),
+            focus_range: 0.05,
+            bloom: Animated::new(0.0),
+            bloom_size: 24.0,
+            bloom_threshold: 0.8,
+            chroma: Animated::new(0.0),
+        }
+    }
+}
+
+impl Lens {
+    pub fn is_active(&self, t: f64) -> bool {
+        self.dof || self.bloom.at(t) > 0.0 || self.chroma.at(t) > 0.0
+    }
 }
 
 /// "Shadows on me": the scene's shadow pattern is read from the layers below (where the ground is
@@ -175,6 +220,7 @@ impl Default for LayerFx {
             shadow: Shadow::default(),
             relight: Relight::default(),
             dapple: Dapple::default(),
+            lens: Lens::default(),
         }
     }
 }
@@ -200,6 +246,10 @@ impl LayerFx {
             .chain(s.contact.key_times())
             .chain(self.dapple.strength.key_times())
             .chain(self.dapple.softness.key_times())
+            .chain(self.lens.dof_amount.key_times())
+            .chain(self.lens.focus.key_times())
+            .chain(self.lens.bloom.key_times())
+            .chain(self.lens.chroma.key_times())
             .chain(r.azimuth.key_times())
             .chain(r.elevation.key_times())
             .chain(r.intensity.key_times())

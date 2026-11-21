@@ -72,6 +72,8 @@ pub struct App {
     pub masks: HashMap<LayerId, PaintRaster>,
     /// AI-estimated normal maps (RGB = n·0.5+0.5) used by relighting.
     pub normals: HashMap<LayerId, PaintRaster>,
+    /// AI depth maps (R: 1 = near) for depth of field.
+    pub depths: HashMap<LayerId, PaintRaster>,
     /// Brush/eraser paint into the selected layer's mask instead of its pixels.
     pub edit_mask: bool,
     pub match_mode: crate::matching::MatchMode,
@@ -84,6 +86,8 @@ pub struct App {
     pub roto_target: crate::ui::roto::RotoTarget,
     /// The floating "Replace window / screen" panel is open.
     pub glass_panel: bool,
+    /// The next canvas click picks the depth-of-field focus for this layer.
+    pub picking_focus: Option<LayerId>,
     /// Pre-answered file dialogs (UI automation, see `script.rs`).
     pub dialog_answers: std::collections::VecDeque<PathBuf>,
     pub wand_threshold: f32,
@@ -136,6 +140,7 @@ impl App {
             paint: HashMap::new(),
             masks: HashMap::new(),
             normals: HashMap::new(),
+            depths: HashMap::new(),
             edit_mask: false,
             match_mode: crate::matching::MatchMode::Surroundings,
             match_reference: None,
@@ -144,6 +149,7 @@ impl App {
             roto_edit: None,
             roto_target: Default::default(),
             glass_panel: false,
+            picking_focus: None,
             dialog_answers: Default::default(),
             wand_threshold: 0.12,
             select_feather: 0.0,
@@ -234,6 +240,7 @@ impl App {
         self.paint.clear();
         self.masks.clear();
         self.normals.clear();
+        self.depths.clear();
         self.edit_mask = false;
         self.match_reference = None;
         self.pixel_undo.clear();
@@ -257,6 +264,11 @@ impl App {
                 && let Ok(r) = PaintRaster::load(&project_file::normals_path(path, l.id))
             {
                 self.normals.insert(l.id, r);
+            }
+            if l.has_depth
+                && let Ok(r) = PaintRaster::load(&project_file::depth_path(path, l.id))
+            {
+                self.depths.insert(l.id, r);
             }
             if let Some(m) = &l.mask {
                 let file = project_file::mask_path(path, l.id);
@@ -319,6 +331,11 @@ impl App {
         for (id, raster) in &self.normals {
             if self.doc.layer(*id).is_some_and(|l| l.has_normals) {
                 raster.save(&project_file::normals_path(&path, *id)).context("saving normal map")?;
+            }
+        }
+        for (id, raster) in &self.depths {
+            if self.doc.layer(*id).is_some_and(|l| l.has_depth) {
+                raster.save(&project_file::depth_path(&path, *id)).context("saving depth map")?;
             }
         }
         for (id, raster) in &self.masks {
@@ -445,6 +462,9 @@ impl App {
         }
         if let Some(r) = self.normals.get(&id) {
             self.normals.insert(new_id, r.duplicate());
+        }
+        if let Some(r) = self.depths.get(&id) {
+            self.depths.insert(new_id, r.duplicate());
         }
         self.selected = Some(new_id);
     }
@@ -642,7 +662,7 @@ impl App {
         doc.canvas.background = [0.0; 4];
         let t = self.time;
         let media = &mut self.media;
-        crate::render::composite(&mut self.viewer.gpu, &doc, t, &self.paint, &self.masks, &self.normals, |m, mt| media.frame(m, mt));
+        crate::render::composite(&mut self.viewer.gpu, &doc, t, &self.paint, &self.masks, &self.normals, &self.depths, |m, mt| media.frame(m, mt));
         let (w, h, px) = self.viewer.gpu.read_back()?;
         Ok(ph_media::Frame::new(w, h, px))
     }
