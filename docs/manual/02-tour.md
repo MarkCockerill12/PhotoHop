@@ -31,7 +31,7 @@ Each row has an eye (show/hide), a lock, a small icon for the kind of layer (pho
 
 ## The canvas
 
-Shows the result. Scroll to zoom towards the mouse pointer; drag with the **middle mouse button**, or hold **Space** and drag, to pan. **Ctrl+0** fits the whole picture in the window.
+Shows the result. Scroll to zoom towards the mouse pointer. To pan (move the view), drag with the **right** or **middle** mouse button — on a touchpad, right-click (two-finger or corner click), hold and drag — or hold **Space** and drag. **Ctrl+0** fits the whole picture in the window.
 
 ## The inspector
 

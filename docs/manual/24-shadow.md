@@ -39,12 +39,20 @@ If you stand where shadows fall — sun through leaves, window frames, blinds �
 - **Strength** — how dark the scene's shadows are on you. **Softness** — blur of the pattern. **Sun / shade split** — moves the line between sunlit and shaded ground.
 - **My ground shadow only darkens sunlit ground** — your shadow doesn't double-darken places that are already in shade.
 
-## Relight
+## Light direction on me (relight)
 
-Changes which side of the layer is lit, to match the scene's sun. It needs to know which way each part of the layer faces: click **Analyse shape (AI)** first (this makes a *normal map*; it's made for people).
+Changes which side of the layer is lit, so it matches the scene's sun — for people, characters and objects alike. Tick **Light direction on me (relight)**.
 
-- **Drag the sun** on the round pad: its direction is where the light comes from; the centre means straight from the camera, the edge means from the side.
-- **Brightness** — strength of the light. **Fill light** — light on the side facing away (0 = black shadows). **Rim light** — a bright edge from behind. **Amount** — blend between your original lighting (0) and the new light (1).
+Relight needs to know which way each part of the layer faces (its *shape*, stored as a normal map):
+
+- **Shape from outline** (no AI, instant) guesses a rounded shape from the cut-out's outline. It works on anything and is made automatically the first time you tick Relight.
+- **Detailed shape (AI, people)** works out the real shape of a person's body and clothes, for more convincing light on people.
+
+Then:
+
+- **Drag the sun** on the round pad: its direction is where the light comes from; the centre means straight from the camera, the edge a low sun from the side.
+- **Ground shadow follows this light** (on by default): dragging the sun also turns the shadow on the ground away from it, and makes it longer for a low sun — one sun for the model and its shadow.
+- **Brightness** — strength of the light. **Fill light** — light on the side facing away (0 = black shadows); lower it for stronger, more directional light. **Rim light** — a bright edge from behind. **Amount** — blend between your original lighting (0) and the new light (1).
 - **Skin softness** — how softly light wraps around skin. **Light colour** and **Rim colour**.
 
 Relight only changes shading; it never repaints your picture.

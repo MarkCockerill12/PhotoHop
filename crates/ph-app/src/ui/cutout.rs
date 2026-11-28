@@ -36,6 +36,44 @@ pub fn cutout_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer, step: u8)
         });
 
         ui.add_space(4.0);
+        ui.label(egui::RichText::new("Remove a colour").strong()).on_hover_text("For plain backgrounds: a studio wall, a green screen, the grey behind a 3D render");
+        ui.horizontal(|ui| {
+            let picking = app.picking_key == Some(id);
+            let label = if picking { "Now click the colour on the canvas…" } else { "Pick a colour to remove" };
+            if ui
+                .selectable_label(picking, label)
+                .on_hover_text("Click a colour in the picture: every pixel close to it disappears, everywhere in the picture (not only the connected area)")
+                .clicked()
+            {
+                app.picking_key = if picking { None } else { Some(id) };
+                if !picking {
+                    app.status = "Click the colour to remove (e.g. the background) on the canvas.".into();
+                }
+            }
+            if let Some(k) = app.key.as_ref().filter(|k| k.layer == id) {
+                let c = k.colour;
+                let (r, g, b) = ((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8);
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 3.0, egui::Color32::from_rgb(r, g, b));
+            }
+        });
+        let mut changed = false;
+        egui::Grid::new("key_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
+            ui.label("Tolerance").on_hover_text("How different a colour may be and still be removed. Raise it if bits of the background remain; lower it if parts of the object vanish.");
+            changed |= ui.add(egui::Slider::new(&mut app.key_tolerance, 0.0..=0.6).max_decimals(3)).changed();
+            ui.end_row();
+            ui.label("Softness").on_hover_text("Fade between removed and kept colours, for smooth edges");
+            changed |= ui.add(egui::Slider::new(&mut app.key_softness, 0.0..=0.3).max_decimals(3)).changed();
+            ui.end_row();
+        });
+        if changed
+            && app.key.as_ref().is_some_and(|k| k.layer == id)
+            && let Err(e) = app.reapply_key()
+        {
+            app.status = format!("Remove a colour: {e:#}");
+        }
+
+        ui.add_space(4.0);
         ui.label(egui::RichText::new("Fix it by hand").strong());
         match &layer.mask {
             None => {

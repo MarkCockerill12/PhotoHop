@@ -64,15 +64,16 @@ impl Script {
                 "cclick" => s.steps.push_back(Step::CanvasClick(glam::Vec2::new(arg(0), arg(1)))),
                 "cdrag" => s.steps.push_back(Step::CanvasDrag(glam::Vec2::new(arg(0), arg(1)), glam::Vec2::new(arg(2), arg(3)))),
                 "move" => s.steps.push_back(Step::Events(vec![egui::Event::PointerMoved(egui::pos2(arg(0), arg(1)))])),
-                "drag" => {
+                "drag" | "rdrag" => {
+                    let button = if cmd == "rdrag" { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
                     let (a, b) = (egui::pos2(arg(0), arg(1)), egui::pos2(arg(2), arg(3)));
                     let steps = (n.get(4).copied().unwrap_or(12.0) as usize).max(2);
                     s.steps.push_back(Step::Events(vec![egui::Event::PointerMoved(a)]));
-                    s.steps.push_back(Step::Events(vec![press(a, egui::PointerButton::Primary, true)]));
+                    s.steps.push_back(Step::Events(vec![press(a, button, true)]));
                     for k in 1..=steps {
                         s.steps.push_back(Step::Events(vec![egui::Event::PointerMoved(a + (b - a) * (k as f32 / steps as f32))]));
                     }
-                    s.steps.push_back(Step::Events(vec![press(b, egui::PointerButton::Primary, false)]));
+                    s.steps.push_back(Step::Events(vec![press(b, button, false)]));
                 }
                 "scroll" => s.steps.push_back(Step::Events(vec![
                     egui::Event::PointerMoved(egui::pos2(arg(0), arg(1))),

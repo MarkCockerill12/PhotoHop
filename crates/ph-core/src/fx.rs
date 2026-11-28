@@ -135,6 +135,8 @@ pub struct Relight {
     pub wrap: f32,
     /// Blend between original (0) and relit (1).
     pub amount: Animated<f32>,
+    /// Dragging the light also turns the ground shadow away from it (one sun).
+    pub shadow_follows: bool,
 }
 
 impl Default for Relight {
@@ -145,11 +147,12 @@ impl Default for Relight {
             elevation: Animated::new(35.0),
             intensity: Animated::new(1.0),
             color: [1.0, 0.95, 0.9],
-            ambient: Animated::new(0.45),
+            ambient: Animated::new(0.3),
             rim: Animated::new(0.0),
             rim_color: [1.0, 0.8, 0.6],
             wrap: 0.3,
             amount: Animated::new(1.0),
+            shadow_follows: true,
         }
     }
 }

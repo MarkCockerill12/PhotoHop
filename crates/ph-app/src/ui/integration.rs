@@ -34,6 +34,13 @@ fn light_pad(app: &mut App, ui: &mut egui::Ui, id: LayerId, az: f32, el: f32) {
         if let Some(l) = app.gesture("Light direction").layer_mut(id) {
             l.fx.relight.azimuth.set(t, new_az, auto);
             l.fx.relight.elevation.set(t, new_el, auto);
+            if l.fx.relight.shadow_follows {
+                // One sun: the ground shadow falls away from the light, longer when it is low.
+                let (angle, _, _, _) = ph_core::Shadow::aim_from_light(new_az, l.fx.relight.ambient.at(t));
+                let length = (0.25 + 1.2 * (1.0 - new_el / 90.0)).clamp(0.2, 2.5);
+                l.fx.shadow.angle.set(t, angle, auto);
+                l.fx.shadow.length.set(t, length, auto);
+            }
         }
     }
     if resp.drag_stopped() {
@@ -137,11 +144,30 @@ pub fn shadow_light_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer, ste
         ui.separator();
         let r = &fx.relight;
         let mut on = r.enabled;
-        ui.horizontal(|ui| {
-            if ui.checkbox(&mut on, egui::RichText::new("Relight").strong()).on_hover_text("Change which side of this layer is lit, to match the scene's sun").changed() {
-                app.edit("Toggle relight", |d| d.layer_mut(id).map_or((), |l| l.fx.relight.enabled = on));
+        if ui
+            .checkbox(&mut on, egui::RichText::new("Light direction on me (relight)").strong())
+            .on_hover_text("Choose where the light comes from: the lit and shaded sides of this layer change to match. Works on anything: people, characters, props.")
+            .changed()
+        {
+            // Any object works straight away: guess its shape from the outline.
+            if on
+                && !layer.has_normals
+                && let Err(e) = app.outline_shape(id)
+            {
+                app.status = format!("Shape from outline: {e:#}");
             }
-            let label = if layer.has_normals { "Re-analyse shape (AI)" } else { "Analyse shape (AI)" };
+            app.edit("Toggle relight", |d| d.layer_mut(id).map_or((), |l| l.fx.relight.enabled = on));
+        }
+        ui.horizontal(|ui| {
+            if ui
+                .button("Shape from outline")
+                .on_hover_text("No AI: guesses a rounded shape from the cut-out's outline so light can wrap around it. Instant, works on any object.")
+                .clicked()
+                && let Err(e) = app.outline_shape(id)
+            {
+                app.status = format!("Shape from outline: {e:#}");
+            }
+            let label = "Detailed shape (AI, people)";
             if ui
                 .add_enabled(!app.ai_running(), egui::Button::new(label))
                 .on_hover_text("For people: AI works out which way each part of the body faces (a normal map), so light can wrap around it")
@@ -153,7 +179,7 @@ pub fn shadow_light_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer, ste
         });
         if r.enabled {
             if !layer.has_normals {
-                ui.colored_label(ACCENT, "Click Analyse shape first: without it the light is flat.");
+                ui.colored_label(ACCENT, "Click Shape from outline (or Detailed shape for people) first: without a shape the light is flat.");
             }
             ui.horizontal(|ui| {
                 light_pad(app, ui, id, r.azimuth.at(t), r.elevation.at(t));
@@ -166,7 +192,11 @@ pub fn shadow_light_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer, ste
                     });
                 });
             });
-            hint(ui, "Drag the sun on the pad: its direction is where the light comes from, the centre means straight from the camera.");
+            hint(ui, "Drag the sun on the pad: its direction is where the light comes from; the centre means straight from the camera, the edge a low sun from the side. Lower Fill light for stronger, more directional light.");
+            let mut follows = r.shadow_follows;
+            if ui.checkbox(&mut follows, "Ground shadow follows this light").on_hover_text("Dragging the sun also turns the shadow on the ground away from it, and makes it longer for a low sun").changed() {
+                app.edit("Shadow follows light", |d| d.layer_mut(id).map_or((), |l| l.fx.relight.shadow_follows = follows));
+            }
             egui::Grid::new("relight_grid2").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
                 plain_row(app, ui, id, "Skin softness", "How softly light wraps around skin", r.wrap, 0.0..=1.0, |l, v| l.fx.relight.wrap = v);
                 colour_row(app, ui, id, "Light colour", r.color, |l, v| l.fx.relight.color = v);

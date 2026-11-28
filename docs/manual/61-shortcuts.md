@@ -29,7 +29,7 @@
 | Key | Action |
 |---|---|
 | Mouse wheel | Zoom towards the pointer |
-| Middle-drag or Space-drag | Pan |
+| Right-drag, middle-drag or Space-drag | Pan (touchpad: right-click, hold and drag) |
 | Ctrl+0 | Fit canvas to window |
 | Space | Play / pause |
 | ← / → | Previous / next frame |

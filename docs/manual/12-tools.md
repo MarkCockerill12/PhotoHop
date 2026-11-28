@@ -10,7 +10,7 @@ Tools live in the toolbar. Hover a tool to see its name; press its key to switch
 | B | Brush | paint on paint layers, or hide parts of a cut-out |
 | E | Eraser | erase paint, or bring back parts of a cut-out |
 | P | Pen | draw exact cut-out shapes with curves |
-| H | Hand | pan the view (also: middle mouse, or hold Space and drag) |
+| H | Hand | pan the view (also: right or middle mouse drag, touchpad right-click hold and drag, or Space-drag) |
 
 ## Move (V)
 
@@ -50,4 +50,4 @@ Each shape can **Add** (keep inside) or **Subtract** (cut away), be inverted, fe
 
 ## Hand (H)
 
-Drag to pan. Scroll to zoom with any tool.
+Drag to pan. With any tool you can also pan by dragging with the right or middle mouse button (touchpad: right-click, hold and drag) or holding Space while dragging. Scroll to zoom.

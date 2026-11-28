@@ -13,6 +13,7 @@ mod export;
 mod fit;
 mod glass;
 mod glass_track;
+mod keying;
 mod lightmap;
 mod manual;
 mod media_cache;

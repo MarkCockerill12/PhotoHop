@@ -87,6 +87,11 @@ pub struct App {
     pub glass_panel: bool,
     /// The next canvas click picks the depth-of-field focus for this layer.
     pub picking_focus: Option<LayerId>,
+    /// "Remove a colour": waiting for a click on this layer.
+    pub picking_key: Option<LayerId>,
+    pub key: Option<crate::keying::KeyState>,
+    pub key_tolerance: f32,
+    pub key_softness: f32,
     /// Pre-answered file dialogs (UI automation, see `script.rs`).
     pub dialog_answers: std::collections::VecDeque<PathBuf>,
     pub wand_threshold: f32,
@@ -149,6 +154,10 @@ impl App {
             roto_target: Default::default(),
             glass_panel: false,
             picking_focus: None,
+            picking_key: None,
+            key: None,
+            key_tolerance: 0.12,
+            key_softness: 0.06,
             dialog_answers: Default::default(),
             wand_threshold: 0.12,
             select_feather: 0.0,
@@ -262,7 +271,7 @@ impl App {
                 self.paint.insert(l.id, raster);
             }
             if l.has_normals
-                && let Ok(r) = PaintRaster::load(&project_file::normals_path(path, l.id))
+                && let Ok(r) = PaintRaster::load_data(&project_file::normals_path(path, l.id))
             {
                 self.normals.insert(l.id, r);
             }
@@ -333,7 +342,7 @@ impl App {
         }
         for (id, raster) in &self.normals {
             if self.doc.layer(*id).is_some_and(|l| l.has_normals) {
-                raster.save(&project_file::normals_path(&path, *id)).context("saving normal map")?;
+                raster.save_data(&project_file::normals_path(&path, *id)).context("saving normal map")?;
             }
         }
         for (id, raster) in &self.depths {

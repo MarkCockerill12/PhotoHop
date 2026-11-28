@@ -13,6 +13,18 @@ The big **Remove background (AI)** button finds the main subject and hides every
 
 Opens a small window where you type what to keep — "person", "dog", "toy gun", "car on the left". AI selects just that. Useful when the photo has several things and you want one of them.
 
+## Remove a colour
+
+For plain backgrounds — a studio wall, a green screen, the flat grey behind a 3D render — remove one colour everywhere at once:
+
+1. Click **Pick a colour to remove**.
+2. Click the colour on the canvas (e.g. the background). Every pixel close to that colour disappears, anywhere in the picture — not only the area you clicked, so gaps between arms and legs go too. A small swatch shows the picked colour.
+3. Adjust **Tolerance** (how different a colour may be and still be removed: raise it if bits of the background remain, lower it if parts of the object vanish) and **Softness** (a fade for smooth edges). The change updates live.
+
+Ctrl+Z undoes. Pick again to remove a second colour. It combines with AI cut-outs, painting and pen shapes.
+
+> Object contains the same colour as the background (a grey shirt on a grey wall)? Remove the colour, then bring the shirt back with the **Eraser** while *Paint on the cut-out* is ticked.
+
 ## Fix it by hand
 
 After any cut-out:

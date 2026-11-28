@@ -123,11 +123,13 @@ pub fn viewer(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
 
 fn handle_tools(app: &mut App, ui: &egui::Ui, resp: &egui::Response) {
     let (shift, space, middle) = ui.input(|i| {
-        (i.modifiers.shift, i.key_down(egui::Key::Space), i.pointer.button_down(egui::PointerButton::Middle))
+        let p = &i.pointer;
+        (i.modifiers.shift, i.key_down(egui::Key::Space), p.button_down(egui::PointerButton::Middle) || p.button_down(egui::PointerButton::Secondary))
     });
     let pointer = resp.interact_pointer_pos().or(resp.hover_pos());
 
-    // Panning works from any tool (middle mouse or Space-drag).
+    // Panning works from any tool: middle or right mouse button (touchpad: right-click, hold and
+    // drag), or Space-drag.
     if resp.dragged() && (app.tool == Tool::Hand || middle || space) {
         app.viewer.pan += resp.drag_delta();
         return;
@@ -155,6 +157,14 @@ fn handle_tools(app: &mut App, ui: &egui::Ui, resp: &egui::Response) {
     {
         let c = app.viewer.screen_to_canvas(p);
         app.status = app.pick_focus(id, c).unwrap_or_else(|e| format!("Pick focus: {e:#}"));
+        return;
+    }
+    if resp.clicked()
+        && let Some(p) = pointer
+        && let Some(id) = app.picking_key.take()
+    {
+        let c = app.viewer.screen_to_canvas(p);
+        app.status = app.remove_colour_at(id, c).unwrap_or_else(|e| format!("Remove a colour: {e:#}"));
         return;
     }
     if resp.clicked() && let Some(p) = pointer {

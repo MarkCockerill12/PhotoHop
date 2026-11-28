@@ -537,7 +537,7 @@ impl App {
                 ));
             }
             if job.task == AiTask::Normals {
-                let raster = PaintRaster::load(&job.output)?;
+                let raster = PaintRaster::load_data(&job.output)?;
                 let id = job.layer;
                 self.edit("AI normals", |d| {
                     if let Some(l) = d.layer_mut(id) {
