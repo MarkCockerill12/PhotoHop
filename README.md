@@ -38,7 +38,8 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
 - **Replace window / screen** (AI menu): show another clip through a window, TV or phone screen in
   four steps: *Find with AI* turns each pane into an editable shape, choose the clip (auto-fitted,
   looped), set how much reflection stays on the glass, and box anything moving in front of it so
-  AI keeps it on top
+  AI keeps it on top. Handheld shot? **Follow the camera** tracks the window frame (no AI) and
+  keyframes the panes and the view so they stay locked to the window
 - **Shadows on me** (Integration): leaf or window shadows in the scene fall on you too. PhotoHop
   reads where the ground is sunlit and looks it up along your cast-shadow direction from the bottom
   of your silhouette, so the gaps in the leaves line up; your own shadow only darkens sunlit ground
@@ -49,7 +50,9 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
 - Bezier roto shapes (P): click points, drag curve handles, close on the first point; Add / Subtract,
   invert, feather, opacity; keyframe the whole shape (◆) so it follows motion. Combined with AI / painted masks
 - Scopes (S): waveform, RGB parade, vectorscope with skin-tone line, histogram
-- **Integration**: light wrap, blur/sharpen, motion blur, film grain, cast + contact shadow (auto-detects the feet),
+- **Integration**: light wrap, blur/sharpen, motion blur, film grain, cast + contact shadow (auto-detects the feet;
+  sharp at the feet and softer further out, a **Thickness** so side light doesn't throw a paper-thin
+  line, and an on-canvas handle to drag the shadow's tip onto the scene's own shadows),
   and **relighting** from AI-estimated normals with a drag-the-sun light pad, rim light and soft
   skin falloff — shading changes only, never repainted pixels
 - **Body-shaped shadow** (AI): rebuilds you in 3D from your photo (SAM 3D Body) and projects that body

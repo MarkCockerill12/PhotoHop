@@ -220,12 +220,18 @@ pub fn integration_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
             egui::Grid::new("shadow_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
                 anim_row(app, ui, id, "Direction", s.angle.at(t), -180.0..=180.0, |l| &mut l.fx.shadow.angle);
                 anim_row(app, ui, id, "Length", s.length.at(t), 0.0..=3.0, |l| &mut l.fx.shadow.length);
+                anim_row(app, ui, id, "Thickness", s.thickness.at(t), 0.0..=0.5, |l| &mut l.fx.shadow.thickness);
                 anim_row(app, ui, id, "Softness", s.softness.at(t), 0.0..=80.0, |l| &mut l.fx.shadow.softness);
                 anim_row(app, ui, id, "Opacity", s.opacity.at(t), 0.0..=1.0, |l| &mut l.fx.shadow.opacity);
                 anim_row(app, ui, id, "Contact", s.contact.at(t), 0.0..=1.0, |l| &mut l.fx.shadow.contact);
                 plain_row(app, ui, id, "Ground line", s.ground, 0.5..=1.2, |l, v| l.fx.shadow.ground = v);
                 colour_row(app, ui, id, "Shadow tint", s.color, |l, v| l.fx.shadow.color = v);
             });
+            ui.label(
+                egui::RichText::new("Aim it on the canvas: with the Move tool, drag the orange dot to where the shadow of your head should land (copy a shadow in the scene). Thickness widens a shadow that looks paper-thin.")
+                    .small()
+                    .weak(),
+            );
         }
 
         ui.separator();

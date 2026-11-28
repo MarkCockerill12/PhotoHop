@@ -75,7 +75,7 @@ def cmd_track(args) -> dict:
     from .video import track_box
 
     box = tuple(float(v) for v in args.box.split(","))
-    n = track_box(args.input, args.output, box, frame=args.frame, device=_device())
+    n = track_box(args.input, args.output, box, frame=args.frame, device=_device(), max_side=args.max_side, model=args.model)
     return {"output": args.output, "frames": n}
 
 
@@ -151,6 +151,9 @@ def main(argv=None) -> int:
     tr.add_argument("output")
     tr.add_argument("--box", required=True, help="x0,y0,x1,y1 in video pixels")
     tr.add_argument("--frame", type=int, default=0)
+    tr.add_argument("--max-side", type=int, default=1080, help="tracking resolution (long side)")
+    tr.add_argument("--model", default="facebook/sam2.1-hiera-large",
+                    help="SAM 2.1 checkpoint (e.g. facebook/sam2.1-hiera-tiny for CPU-only machines)")
     vm = sub.add_parser("video-matte", help="cut the main subject out of a video (BiRefNet + MatAnyone 2) -> mask video")
     vm.add_argument("input")
     vm.add_argument("output")

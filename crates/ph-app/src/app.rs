@@ -102,6 +102,8 @@ pub struct App {
     pub blender_job: Option<crate::blender::BlenderJob>,
     pub scopes: crate::scopes::Scopes,
     pub ai: crate::ai::AiState,
+    /// Background "Follow the camera" track for glass.
+    pub camera_job: Option<crate::glass_track::CameraJob>,
     pub egui_ctx: egui::Context,
     pub status: String,
     /// Unsaved changes since last save.
@@ -160,6 +162,7 @@ impl App {
             blender_job: None,
             scopes: crate::scopes::Scopes::default(),
             ai: crate::ai::AiState::default(),
+            camera_job: None,
             egui_ctx: ctx.clone(),
             status: "Import a photo or video to start (File > Import, or drop files onto the window).".into(),
             dirty: false,

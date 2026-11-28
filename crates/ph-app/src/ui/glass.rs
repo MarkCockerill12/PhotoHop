@@ -91,6 +91,19 @@ fn panel(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
         });
         shape_list(app, ui, layer, RotoTarget::Glass);
         ui.label(egui::RichText::new("Set a shape to Subtract to keep something in front of the glass.").small().weak());
+        if layer_is_video(app, layer) && g.has_glass() {
+            let tracking = app.camera_job_running();
+            if ui
+                .add_enabled(!tracking, egui::Button::new(if tracking { "Following the camera…" } else { "Follow the camera" }))
+                .on_hover_text(
+                    "Handheld shot? Tracks the window frame and wall through the clip and keyframes the panes (and the view through them) so they stay locked to the window. Draw the panes on the current frame first.",
+                )
+                .clicked()
+                && let Err(e) = app.glass_follow_camera(id)
+            {
+                app.status = format!("Follow the camera: {e:#}");
+            }
+        }
 
         step(ui, 2, "What you see through it");
         let view = g.view.and_then(|m| app.doc.media(m)).map(|m| m.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default());
@@ -165,7 +178,7 @@ fn panel(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
         let is_video = layer_is_video(app, layer);
         step(ui, 4, "Keep in front");
         if is_video {
-            ui.label(egui::RichText::new("Something moving between you and the glass (a laptop, your hand)? Draw a box around it and AI follows it through the clip.").small().weak());
+            ui.label(egui::RichText::new("Anything between the camera and the glass (you, your arms, a laptop)? Draw a box around it and AI follows it through the clip. Dark sleeves against a night window are easy for the glass finder to miss, so box yourself too.").small().weak());
             if ui.add_enabled(!busy, egui::Button::new("Draw a box around it")).clicked() {
                 app.ai.picking_box = true;
                 app.ai.box_for_glass = true;

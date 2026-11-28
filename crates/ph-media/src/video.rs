@@ -229,6 +229,12 @@ impl VideoReader {
         }
     }
 
+    /// Index of the frame the running decoder delivers next (reading it is cheap; earlier ones
+    /// need a restart).
+    pub fn next_frame(&self) -> u64 {
+        if self.child.is_some() { self.next_frame } else { 0 }
+    }
+
     /// Decode frame `index` (clamped to the clip) into working format.
     pub fn frame(&mut self, index: u64) -> Result<Frame> {
         let index = index.min(self.info.frame_count().saturating_sub(1));

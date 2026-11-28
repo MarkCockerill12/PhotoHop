@@ -468,9 +468,11 @@ struct ShadowParams {
     contact0: vec4<f32>,  // canvas -> source rows for the contact shadow
     contact1: vec4<f32>,
     contact2: vec4<f32>,
-    size: vec4<f32>,      // source w, h, cast softness (src px), contact softness (src px)
+    size: vec4<f32>,      // source w, h, cast softness (canvas px), contact softness (canvas px)
     color: vec4<f32>,     // tint rgb, cast opacity
     extra: vec4<f32>,     // contact opacity, has mask, mask invert, follow light map
+    ground: vec4<f32>,    // ground row (src px, 0 = flat), body height (src px), contact height (src px), sweep steps
+    sweep: vec4<f32>,     // body depth on the ground: canvas offset spanned by the sweep (xy), min blur between steps (canvas px), ground line y (canvas px)
 };
 @group(0) @binding(0) var sh_backdrop: texture_2d<f32>;
 @group(0) @binding(1) var sh_dst: texture_storage_2d<rgba16float, write>;
@@ -492,11 +494,54 @@ fn sh_alpha(s: vec2<f32>) -> f32 {
     return a;
 }
 
+// Soft silhouette coverage at canvas point p: blur taps are spread on the canvas (where the shadow
+// lies), then mapped to the layer's pixels through the projection rows. Spreading them in the layer
+// instead would squash the blur along with the projection.
 fn sh_soft(p: vec2<f32>, r0: vec4<f32>, r1: vec4<f32>, r2: vec4<f32>, radius: f32) -> f32 {
-    let s = r0.xy * p.x + r1.xy * p.y + r2.xy;
-    var a = sh_alpha(s);
-    for (var i = 0u; i < TAPS; i++) { a += sh_alpha(s + disk(i) * radius); }
+    var a = 0.0;
+    for (var i = 0u; i <= TAPS; i++) {
+        var q = p;
+        if (i > 0u) { q = p + disk(i - 1u) * radius; }
+        a += sh_alpha(r0.xy * q.x + r1.xy * q.y + r2.xy);
+    }
     return a / f32(TAPS + 1u);
+}
+
+// Contact shadow: only silhouette points within the contact height above the ground count, so a
+// raised arm or a held prop doesn't smear a line along the floor.
+fn sh_contact(p: vec2<f32>) -> f32 {
+    if (SH.ground.x <= 0.0) { return sh_soft(p, SH.contact0, SH.contact1, SH.contact2, SH.size.w); }
+    var a = 0.0;
+    for (var i = 0u; i <= TAPS; i++) {
+        var q = p;
+        if (i > 0u) { q = p + disk(i - 1u) * SH.size.w; }
+        // The darkening spreads on the floor around the sole, behind as well as in front of it
+        // (the contact rows mirror the silhouette below the ground line; fold the rest onto it).
+        q.y = SH.sweep.w + abs(q.y - SH.sweep.w);
+        let s = SH.contact0.xy * q.x + SH.contact1.xy * q.y + SH.contact2.xy;
+        a += sh_alpha(s) * (1.0 - smoothstep(0.0, SH.ground.z, SH.ground.x - s.y));
+    }
+    // Right under a sole the floor gets almost no light: saturate early.
+    return min(2.5 * a / f32(TAPS + 1u), 1.0);
+}
+
+// Cast shadow: blur grows with the height of the part casting it (sharp at the feet, soft at the
+// head), and the flat silhouette is swept across the body's depth.
+fn sh_cast(p: vec2<f32>) -> f32 {
+    if (SH.ground.x <= 0.0) { return sh_soft(p, SH.cast0, SH.cast1, SH.cast2, SH.size.z); }
+    let steps = max(u32(SH.ground.w), 1u);
+    // Steps start at a random offset per pixel so hard-edged copies blend instead of striping.
+    let jitter = hash2(p);
+    var best = 0.0;
+    for (var j = 0u; j < steps; j++) {
+        var off = vec2<f32>(0.0);
+        if (steps > 1u) { off = SH.sweep.xy * ((f32(j) + jitter) / f32(steps) - 0.5); }
+        let q = p + off;
+        let s = SH.cast0.xy * q.x + SH.cast1.xy * q.y + SH.cast2.xy;
+        let h = clamp((SH.ground.x - s.y) / max(SH.ground.y, 1.0), 0.0, 1.0);
+        best = max(best, sh_soft(q, SH.cast0, SH.cast1, SH.cast2, max(SH.size.z * (0.3 + 1.4 * h), SH.sweep.z)));
+    }
+    return best;
 }
 
 @compute @workgroup_size(8, 8)
@@ -507,8 +552,8 @@ fn shadow(@builtin(global_invocation_id) gid: vec3<u32>) {
     let back = textureLoad(sh_backdrop, px, 0);
     let p = vec2<f32>(gid.xy) + vec2<f32>(0.5);
     var k = 0.0;
-    if (SH.color.w > 0.0) { k = max(k, SH.color.w * sh_soft(p, SH.cast0, SH.cast1, SH.cast2, SH.size.z)); }
-    if (SH.extra.x > 0.0) { k = max(k, SH.extra.x * sh_soft(p, SH.contact0, SH.contact1, SH.contact2, SH.size.w)); }
+    if (SH.color.w > 0.0) { k = max(k, SH.color.w * sh_cast(p)); }
+    if (SH.extra.x > 0.0) { k = max(k, SH.extra.x * sh_contact(p)); }
     if (SH.extra.w > 0.5) {
         // Ground already in the scene's shadow can't lose more sunlight.
         k = k * textureSampleLevel(sh_light, sh_sampler, p / vec2<f32>(dims), 0.0).r;

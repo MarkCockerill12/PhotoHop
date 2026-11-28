@@ -16,6 +16,11 @@ pub struct Shadow {
     pub angle: Animated<f32>,
     /// Shadow length relative to the subject's height.
     pub length: Animated<f32>,
+    /// How deep the body is front to back, as a fraction of its height on screen: a cut-out is
+    /// flat, so without this a light from the side throws a paper-thin line. Thickens the shadow
+    /// across the ground (0 = flat card).
+    #[serde(default = "default_thickness")]
+    pub thickness: Animated<f32>,
     /// Blur radius in canvas pixels.
     pub softness: Animated<f32>,
     pub opacity: Animated<f32>,
@@ -31,6 +36,10 @@ fn yes() -> bool {
     true
 }
 
+fn default_thickness() -> Animated<f32> {
+    Animated::new(0.08)
+}
+
 impl Default for Shadow {
     fn default() -> Self {
         Self {
@@ -38,6 +47,7 @@ impl Default for Shadow {
             body_shape: true,
             angle: Animated::new(60.0),
             length: Animated::new(0.6),
+            thickness: default_thickness(),
             softness: Animated::new(12.0),
             opacity: Animated::new(0.6),
             color: [0.05, 0.05, 0.08],
@@ -62,6 +72,26 @@ impl Shadow {
         Affine2::from_translation(anchor) * Affine2::from_mat2(m) * Affine2::from_translation(-anchor)
     }
 
+    /// Where the shadow of the top of the subject lands (canvas), for the on-canvas handle.
+    pub fn tip(&self, t: f64, layer: Affine2, size: Vec2) -> Vec2 {
+        let (anchor, tall) = self.anchor_and_height(layer, size);
+        let a = self.angle.at(t).to_radians();
+        anchor + Vec2::new(a.cos(), a.sin()) * tall * self.length.at(t)
+    }
+
+    /// Angle (degrees) and length that put the shadow's tip at `tip` (canvas).
+    pub fn aim_at(&self, tip: Vec2, layer: Affine2, size: Vec2) -> (f32, f32) {
+        let (anchor, tall) = self.anchor_and_height(layer, size);
+        let d = tip - anchor;
+        (d.y.atan2(d.x).to_degrees(), d.length() / tall.max(1.0))
+    }
+
+    /// The ground point under the layer centre and the subject's height above it (canvas px).
+    pub fn anchor_and_height(&self, layer: Affine2, size: Vec2) -> (Vec2, f32) {
+        let anchor = layer.transform_point2(Vec2::new(size.x * 0.5, size.y * self.ground));
+        (anchor, layer.transform_vector2(Vec2::new(0.0, size.y * self.ground)).length())
+    }
+
     /// Point the shadow away from a light seen in the image (`azimuth`: 0 = from the right,
     /// 90 = from above) and make it as hard as the light: a high sun gives a short shadow falling
     /// slightly behind the subject, a low light a long one, soft light (high `ambient`) a faint,
@@ -76,10 +106,11 @@ impl Shadow {
         (angle, length, 4.0 + ambient * 20.0, ((1.0 - ambient) * 0.85).clamp(0.2, 0.75))
     }
 
-    /// Short, nearly flat contact shadow right under the subject.
+    /// Short, nearly flat contact shadow right under the subject (the shader keeps only the
+    /// parts of the silhouette that are close to the ground: feet, knees, a hand on the floor).
     pub fn contact_matrix(&self, layer: Affine2, size: Vec2) -> Affine2 {
         let anchor = layer.transform_point2(Vec2::new(size.x * 0.5, size.y * self.ground));
-        let m = Mat2::from_cols(Vec2::new(1.0, 0.0), Vec2::new(0.0, -0.06));
+        let m = Mat2::from_cols(Vec2::new(1.0, 0.0), Vec2::new(0.0, -0.2));
         Affine2::from_translation(anchor) * Affine2::from_mat2(m) * Affine2::from_translation(-anchor)
     }
 }

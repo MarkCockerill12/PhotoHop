@@ -212,6 +212,9 @@ fn shadow_and_light_wrap() {
         color: [0.0; 3],
         follow_light: false,
         shape: None,
+        ground_y: 0.0,
+        ground_canvas_y: 0.0,
+        thickness: Vec2::ZERO,
     };
     c.render(32, 32, [0.5, 0.5, 0.5, 1.0], &[LayerDraw { shadow: Some(shadow), ..base() }]);
     let (_, _, px) = c.read_back().unwrap();
@@ -248,6 +251,9 @@ fn shadow_shape_is_drawn_in_layer_space() {
         color: [0.0; 3],
         follow_light: false,
         shape: Some(9),
+        ground_y: 0.0,
+        ground_canvas_y: 0.0,
+        thickness: Vec2::ZERO,
     };
     let draw = LayerDraw {
         source: 1,
@@ -271,4 +277,63 @@ fn shadow_shape_is_drawn_in_layer_space() {
     let at = |x: usize, y: usize| px[(y * 32 + x) * 4].to_f32();
     assert!(at(15, 14) < 0.05, "bottom half shadowed: {}", at(15, 14));
     assert!((at(15, 9) - 0.5).abs() < 0.01, "top half untouched: {}", at(15, 9));
+}
+
+#[test]
+fn contact_shadow_only_from_parts_near_the_ground() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut c = Compositor::new(&device, &queue);
+    // White figure on a white canvas (only its shadow shows): a 4 px wide "foot" on the
+    // ground (rows 120..128) and a 16 px wide "arm" high up (rows 8..16), in a 16x128 layer at (8, 0).
+    let px: Vec<f16> = (0..16 * 128)
+        .flat_map(|i| {
+            let (x, y) = (i % 16, i / 16);
+            let a = ((120..128).contains(&y) && (6..10).contains(&x)) || (8..16).contains(&y);
+            let a = if a { 1.0 } else { 0.0 };
+            [a, a, a, a].map(f16::from_f32)
+        })
+        .collect();
+    c.upload(1, 0, 16, 128, &px);
+    let matrix = Affine2::from_translation(Vec2::new(8.0, 0.0));
+    let anchor = Vec2::new(16.0, 128.0);
+    let flat = Affine2::from_translation(anchor) * Affine2::from_mat2(glam::Mat2::from_cols(Vec2::X, Vec2::new(0.0, -0.2))) * Affine2::from_translation(-anchor);
+    let shadow = ShadowDraw {
+        cast: Affine2::IDENTITY,
+        contact: flat,
+        softness: 0.0,
+        contact_softness: 0.0,
+        opacity: 0.0,
+        contact_opacity: 1.0,
+        color: [0.0; 3],
+        follow_light: false,
+        shape: None,
+        ground_y: 128.0,
+        ground_canvas_y: 128.0,
+        thickness: Vec2::ZERO,
+    };
+    let draw = LayerDraw {
+        source: 1,
+        size: Vec2::new(16.0, 128.0),
+        matrix,
+        opacity: 1.0,
+        blend: BlendMode::Normal,
+        mask: None,
+        mask_invert: false,
+        mask_srgb: false,
+        grade: None,
+        curves: None,
+        fx: None,
+        normals: None,
+        shadow: Some(shadow),
+        light: None,
+        depth: None,
+    };
+    c.render(32, 140, [1.0, 1.0, 1.0, 1.0], &[draw]);
+    let (_, _, out) = c.read_back().unwrap();
+    let at = |x: usize, y: usize| out[(y * 32 + x) * 4].to_f32();
+    assert!(at(15, 128) < 0.3, "dark right under the foot (below the ground line too): {}", at(15, 128));
+    assert!(at(15, 134) > 0.95, "but not far: {}", at(15, 134));
+    assert!(at(9, 128) > 0.95 && at(22, 128) > 0.95, "the raised arm leaves no line on the floor: {} {}", at(9, 128), at(22, 128));
 }

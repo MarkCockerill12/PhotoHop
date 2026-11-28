@@ -26,6 +26,17 @@ fn layer_corners(app: &App, id: LayerId) -> Option<[egui::Pos2; 4]> {
     Some(pts.map(|p| app.viewer.canvas_to_screen(m.transform_point2(p))))
 }
 
+/// Screen position of the selected layer's shadow-tip handle (and its ground anchor), when its
+/// cast shadow is on.
+fn shadow_handle(app: &App, id: LayerId) -> Option<(egui::Pos2, egui::Pos2)> {
+    let l = app.doc.layer(id).filter(|l| l.fx.shadow.enabled && !l.locked)?;
+    let size = app.doc.layer_source_size(l);
+    let m = l.transform.matrix(app.time, size);
+    let s = &l.fx.shadow;
+    let tip = app.viewer.canvas_to_screen(s.tip(app.time, m, size));
+    Some((tip, app.viewer.canvas_to_screen(s.anchor_and_height(m, size).0)))
+}
+
 fn rotate_handle(c: &[egui::Pos2; 4]) -> egui::Pos2 {
     let top_mid = c[0] + (c[1] - c[0]) * 0.5;
     let centre = c[0] + (c[2] - c[0]) * 0.5;
@@ -211,6 +222,12 @@ fn start_drag(app: &mut App, p: egui::Pos2) -> Option<Drag> {
             Some(base(DragMode::Select, app.selected))
         }
         Tool::Move => {
+            if let Some(id) = app.selected
+                && let Some((tip, _)) = shadow_handle(app, id)
+                && tip.distance(p) <= HANDLE_R * 1.8
+            {
+                return Some(base(DragMode::ShadowTip, Some(id)));
+            }
             if let Some(id) = app.selected.filter(|id| app.doc.layer(*id).is_some_and(|l| !l.locked))
                 && let Some(c) = layer_corners(app, id)
             {
@@ -272,6 +289,19 @@ fn update_drag(app: &mut App, d: Drag, screen: Vec2, shift: bool) {
                 }
             } else if pts.len() >= 2 {
                 pts[1] = cur;
+            }
+        }
+        DragMode::ShadowTip => {
+            if let Some(id) = d.layer
+                && let Some(l) = app.doc.layer(id)
+            {
+                let size = app.doc.layer_source_size(l);
+                let m = l.transform.matrix(t, size);
+                let (angle, length) = l.fx.shadow.aim_at(cur, m, size);
+                if let Some(l) = app.gesture("Aim shadow").layer_mut(id) {
+                    l.fx.shadow.angle.set(t, angle, auto);
+                    l.fx.shadow.length.set(t, length.min(3.0), auto);
+                }
             }
         }
         DragMode::Move => {
@@ -421,6 +451,15 @@ fn draw_overlays(app: &App, painter: &egui::Painter, resp: &egui::Response) {
         let rh = rotate_handle(&c);
         painter.line_segment([top_mid, rh], egui::Stroke::new(1.0, accent));
         painter.circle(rh, HANDLE_R, egui::Color32::WHITE, egui::Stroke::new(1.0, accent));
+        // Shadow tip: drag it to where the shadow of the top of the subject should land.
+        if let Some((tip, anchor)) = shadow_handle(app, id) {
+            let warm = egui::Color32::from_rgb(255, 196, 64);
+            painter.add(egui::Shape::dashed_line(&[anchor, tip], egui::Stroke::new(1.5, warm), 6.0, 4.0));
+            painter.circle(tip, HANDLE_R + 1.0, egui::Color32::from_black_alpha(160), egui::Stroke::new(2.0, warm));
+            if resp.hover_pos().is_some_and(|h| h.distance(tip) <= HANDLE_R * 1.8) {
+                painter.text(tip + egui::vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, "Shadow: drag to aim", egui::FontId::proportional(12.0), warm);
+            }
+        }
     }
     if app.viewer.select_pts.len() >= 2 {
         let pts: Vec<egui::Pos2> = app.viewer.select_pts.iter().map(|p| app.viewer.canvas_to_screen(*p)).collect();

@@ -114,6 +114,15 @@ pub struct ShadowDraw {
     /// Key of a body-shaped shadow mask in the layer's own pixel space (alpha = shadow); when set
     /// it is drawn instead of the projected silhouette.
     pub shape: Option<u64>,
+    /// Ground line in the layer's source pixels (rows from the top). When > 0 the shadow knows how
+    /// high each part of the silhouette is: only parts near the ground make the contact shadow,
+    /// and the cast shadow is sharp at the feet and softer further out (like a real penumbra).
+    pub ground_y: f32,
+    /// The same ground line on the canvas (y, px): the contact shadow spreads both sides of it.
+    pub ground_canvas_y: f32,
+    /// The body's depth on the ground (canvas px, usually straight down the screen): the flat
+    /// silhouette is swept along it so a side light doesn't throw a paper-thin line.
+    pub thickness: Vec2,
 }
 
 #[repr(C)]
@@ -124,6 +133,8 @@ struct ShadowParams {
     size: [f32; 4],
     color: [f32; 4],
     extra: [f32; 4],
+    ground: [f32; 4],
+    sweep: [f32; 4],
 }
 
 fn rows(m: Affine2) -> [[f32; 4]; 3] {
@@ -346,10 +357,13 @@ impl Compositor {
                 // A body shadow already sits where it falls: read it straight through the layer.
                 let src_from_cast = if shape_view.is_some() { inv } else { inv * sh.cast.inverse() };
                 let src_from_contact = inv * sh.contact.inverse();
+                // Sweep steps across the body's depth: enough that neighbouring steps overlap.
+                let span = sh.thickness.length();
+                let sweep_steps = if shape_view.is_none() && sh.ground_y > 0.0 && span > 1.0 { (span / (sh.softness * 0.3 + 1.0)).ceil().clamp(2.0, 16.0) } else { 1.0 };
                 let sp = ShadowParams {
                     cast: rows(src_from_cast),
                     contact: rows(src_from_contact),
-                    size: [layer.size.x, layer.size.y, sh.softness * px_scale, sh.contact_softness * px_scale],
+                    size: [layer.size.x, layer.size.y, sh.softness, sh.contact_softness],
                     color: [sh.color[0], sh.color[1], sh.color[2], sh.opacity.clamp(0.0, 1.0) * layer.opacity.clamp(0.0, 1.0)],
                     extra: [
                         if shape_view.is_some() { 0.0 } else { sh.contact_opacity.clamp(0.0, 1.0) * layer.opacity.clamp(0.0, 1.0) },
@@ -357,6 +371,9 @@ impl Compositor {
                         f32::from(u8::from(layer.mask_invert)),
                         f32::from(u8::from(sh.follow_light && light_view.is_some())),
                     ],
+                    ground: [if shape_view.is_some() { 0.0 } else { sh.ground_y }, sh.ground_y, sh.ground_y * 0.08, sweep_steps],
+                    // Each sweep step is blurred at least by the gap to the next, so the steps blend.
+                    sweep: [sh.thickness.x, sh.thickness.y, sh.thickness.length() / sweep_steps * 0.5, sh.ground_canvas_y],
                 };
                 let sbuf = self.pipes.uniform(&self.device, bytemuck::bytes_of(&sp));
                 let next = 1 - cur;

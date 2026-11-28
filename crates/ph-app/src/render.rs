@@ -21,6 +21,8 @@ pub enum DragMode {
     AiBox,
     Select,
     Roto(crate::ui::roto::RotoDrag),
+    /// The cast shadow's tip (where the top of the subject's shadow lands).
+    ShadowTip,
 }
 
 /// State captured when a viewer drag starts (values are absolute, so drags never drift).
@@ -221,6 +223,8 @@ pub fn composite(
     let mut keep = HashSet::new();
     // The nearest layer below with depth of field: (its matrix, source size, layer id).
     let mut scene_dof: Option<(glam::Affine2, Vec2, LayerId)> = None;
+    // Layers that took the scene's focus at their feet: (canvas → layer map, size, ground, blur).
+    let mut subjects: Vec<(glam::Affine2, Vec2, f32, f32)> = Vec::new();
     for (layer_idx, layer) in doc.layers.iter().enumerate().filter(|(_, l)| l.visible && l.active_at(t)) {
         let size = doc.layer_source_size(layer);
         let key = match &layer.content {
@@ -324,13 +328,21 @@ pub fn composite(
                 let glass_cov: Option<Vec<f32>> = glass.map(|g| {
                     let mut gc = crate::roto::shapes_coverage(&g.panes, t, w, h, [size.x, size.y]).unwrap_or_else(|| vec![0.0; n]);
                     for (_, f) in &front {
+                        // Tracked masks are usually lower-res than the shot: sample bilinearly so
+                        // their edges don't turn into stairs.
+                        let at = |x: u32, y: u32| {
+                            let i = ((y.min(f.height - 1) * f.width + x.min(f.width - 1)) * 4) as usize;
+                            ph_media::color::linear_to_srgb(f.pixels[i].to_f32().max(0.0)).clamp(0.0, 1.0)
+                        };
                         for (i, v) in gc.iter_mut().enumerate() {
                             let (x, y) = (i as u32 % w, i as u32 / w);
-                            let fx = ((x as f32 + 0.5) / w as f32 * f.width as f32) as u32;
-                            let fy = ((y as f32 + 0.5) / h as f32 * f.height as f32) as u32;
-                            let fi = ((fy.min(f.height - 1) * f.width + fx.min(f.width - 1)) * 4) as usize;
-                            let m = ph_media::color::linear_to_srgb(f.pixels[fi].to_f32().max(0.0)).clamp(0.0, 1.0);
-                            *v *= 1.0 - m;
+                            let sx = ((x as f32 + 0.5) / w as f32 * f.width as f32 - 0.5).max(0.0);
+                            let sy = ((y as f32 + 0.5) / h as f32 * f.height as f32 - 0.5).max(0.0);
+                            let (x0, y0) = (sx as u32, sy as u32);
+                            let (tx, ty) = (sx.fract(), sy.fract());
+                            let top = at(x0, y0) * (1.0 - tx) + at(x0 + 1, y0) * tx;
+                            let bot = at(x0, y0 + 1) * (1.0 - tx) + at(x0 + 1, y0 + 1) * tx;
+                            *v *= 1.0 - (top * (1.0 - ty) + bot * ty);
                         }
                     }
                     gc
@@ -392,11 +404,21 @@ pub fn composite(
         let matrix = layer.transform.matrix(t, size);
         // Same lens blur as the background where this layer stands (its feet).
         let mut focus_blur = 0.0f32;
+        let feet = matrix.transform_point2(Vec2::new(size.x * 0.5, size.y * layer.fx.shadow.ground));
+        // Something held by (or in front of) a subject, not standing on the ground itself — a prop
+        // in a hand — is as far away as that subject: use its blur, not the depth behind it.
+        let holder = subjects.iter().rev().find(|(inv, s, ground, _)| {
+            let p = inv.transform_point2(feet);
+            p.x >= 0.0 && p.x <= s.x && p.y >= 0.0 && p.y < s.y * ground - s.y * 0.02
+        });
         if layer.fx.follow_scene_focus
+            && let Some(&(_, _, _, b)) = holder
+        {
+            focus_blur = b;
+        } else if layer.fx.follow_scene_focus
             && let Some((bm, bsize, bid)) = scene_dof
             && let (Some(bl), Some(depth)) = (doc.layer(bid), depths.get(&bid))
         {
-            let feet = matrix.transform_point2(Vec2::new(size.x * 0.5, size.y * layer.fx.shadow.ground));
             let src = bm.inverse().transform_point2(feet);
             let (u, v) = (src.x / bsize.x, src.y / bsize.y);
             if (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v) {
@@ -408,6 +430,7 @@ pub fn composite(
                 let off = ((d - lens.focus.at(t)).abs() - range).max(0.0) / (1.0 - range).max(1e-3);
                 focus_blur = (off * 2.0).clamp(0.0, 1.0) * lens.dof_amount.at(t);
             }
+            subjects.push((matrix.inverse(), size, layer.fx.shadow.ground, focus_blur));
         }
         if layer.fx.lens.dof && depth_key_exists(layer, depths) {
             scene_dof = Some((matrix, size, layer.id));
@@ -450,6 +473,9 @@ pub fn composite(
                 color: s.color,
                 follow_light: light.is_some() && dapple.shadow_follows,
                 shape: body_shadow_key(gpu, layer, t, size, &mut keep),
+                ground_y: size.y * s.ground,
+                ground_canvas_y: s.anchor_and_height(matrix, size).0.y,
+                thickness: Vec2::new(0.0, s.anchor_and_height(matrix, size).1 * s.thickness.at(t).max(0.0)),
             }
         });
         let graded = layer.grade.enabled && !layer.grade.is_identity();

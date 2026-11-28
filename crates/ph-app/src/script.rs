@@ -4,7 +4,7 @@
 //!
 //! Commands (coordinates in UI points, one per line, `#` comments):
 //!   click X Y | dclick X Y | rclick X Y | move X Y | drag X1 Y1 X2 Y2 [STEPS]
-//!   cclick CX CY (canvas pixels, whatever the zoom)
+//!   cclick CX CY | cdrag CX1 CY1 CX2 CY2 (canvas pixels, whatever the zoom)
 //!   key NAME [ctrl] [shift] [alt] | text STRING | scroll X Y DY
 //!   wait SECONDS | waitai (until AI / Blender / export jobs finish) | shot NAME | answer PATH | quit
 
@@ -17,6 +17,7 @@ enum Step {
     Events(Vec<egui::Event>),
     /// A click at canvas pixel coordinates (mapped to the screen when it runs).
     CanvasClick(glam::Vec2),
+    CanvasDrag(glam::Vec2, glam::Vec2),
     Wait(Duration),
     WaitJobs,
     Shot(String),
@@ -61,6 +62,7 @@ impl Script {
                     }
                 }
                 "cclick" => s.steps.push_back(Step::CanvasClick(glam::Vec2::new(arg(0), arg(1)))),
+                "cdrag" => s.steps.push_back(Step::CanvasDrag(glam::Vec2::new(arg(0), arg(1)), glam::Vec2::new(arg(2), arg(3)))),
                 "move" => s.steps.push_back(Step::Events(vec![egui::Event::PointerMoved(egui::pos2(arg(0), arg(1)))])),
                 "drag" => {
                     let (a, b) = (egui::pos2(arg(0), arg(1)), egui::pos2(arg(2), arg(3)));
@@ -141,6 +143,17 @@ impl Script {
                 self.steps.push_front(Step::Events(vec![press(p, b, false)]));
                 self.steps.push_front(Step::Events(vec![press(p, b, true)]));
                 self.steps.push_front(Step::Events(vec![egui::Event::PointerMoved(p)]));
+            }
+            Step::CanvasDrag(a, b) => {
+                let (a, b) = (app.viewer.canvas_to_screen(a), app.viewer.canvas_to_screen(b));
+                let mut evs = vec![Step::Events(vec![egui::Event::PointerMoved(a)]), Step::Events(vec![press(a, egui::PointerButton::Primary, true)])];
+                for k in 1..=12 {
+                    evs.push(Step::Events(vec![egui::Event::PointerMoved(a + (b - a) * (k as f32 / 12.0))]));
+                }
+                evs.push(Step::Events(vec![press(b, egui::PointerButton::Primary, false)]));
+                for e in evs.into_iter().rev() {
+                    self.steps.push_front(e);
+                }
             }
             Step::Wait(d) => self.until = Some(Instant::now() + d),
             Step::WaitJobs => {

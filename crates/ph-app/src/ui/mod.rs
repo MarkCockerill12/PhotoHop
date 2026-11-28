@@ -19,6 +19,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     handle_dropped_files(app, ui.ctx());
     app.media.poll();
     app.poll_ai();
+    app.poll_camera_job();
     app.advance_playback();
     if app.export.job.is_some() && app.pump_export() {
         ui.ctx().request_repaint();

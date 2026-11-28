@@ -184,3 +184,46 @@ pub(crate) fn fetch_full(
         Some((export_key(m.id, 0), stills.get(&m.id)?.clone()))
     }
 }
+
+#[cfg(test)]
+mod real_render {
+    use super::ImageFormat;
+    use std::path::PathBuf;
+    /// Opt-in: `PHOTOHOP_TEST_RENDER=in.phop|out_prefix|t1,t2` renders those times to `<prefix>_<t>.png`.
+    #[test]
+    fn render_real() {
+        let Some(spec) = std::env::var("PHOTOHOP_TEST_RENDER").ok() else {
+            return;
+        };
+        let mut it = spec.split('|');
+        let (inp, out, times) = (it.next().unwrap(), it.next().unwrap(), it.next().unwrap_or("0"));
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+        let mut app = crate::app::App::new(&egui::Context::default(), &device, &queue);
+        app.open(std::path::Path::new(inp)).unwrap();
+        app.export.image_format = ImageFormat::Png8;
+        // Optional: `PHOTOHOP_TEST_SHADOW=<layer name>` runs Match light on it and turns its shadow on.
+        if let Ok(name) = std::env::var("PHOTOHOP_TEST_SHADOW") {
+            let id = app.doc.layers.iter().find(|l| l.name == name).map(|l| l.id).expect("layer");
+            app.selected = Some(id);
+            eprintln!("{}", app.match_light().unwrap());
+            app.edit("test shadow", |d| d.layer_mut(id).map_or((), |l| l.fx.shadow.enabled = true));
+            let s = &app.doc.layer(id).unwrap().fx.shadow;
+            eprintln!("shadow angle {:.1} length {:.2} soft {:.1} opacity {:.2} ground {:.3}", s.angle.at(0.0), s.length.at(0.0), s.softness.at(0.0), s.opacity.at(0.0), s.ground);
+        }
+        // `video` instead of times exports the whole clip to `<prefix>.mp4`, as File > Export does.
+        if times == "video" {
+            app.start_video_export(PathBuf::from(format!("{out}.mp4"))).unwrap();
+            while app.pump_export() {}
+            eprintln!("{}", app.status);
+            return;
+        }
+        for t in times.split(',') {
+            app.time = t.parse().unwrap();
+            app.export_image(PathBuf::from(format!("{out}_{t}.png"))).unwrap();
+        }
+    }
+}

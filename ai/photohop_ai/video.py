@@ -47,7 +47,7 @@ def write_mask_video(frames: list[np.ndarray], out: str, fps: float) -> None:
 
 
 def track_box(video: str, out: str, box: tuple[float, float, float, float], frame: int = 0,
-              device: str = "cuda", max_side: int = 1080) -> int:
+              device: str = "cuda", max_side: int = 1080, model: str = "facebook/sam2.1-hiera-large") -> int:
     """SAM 2.1 tracks the object inside `box` (pixels of the original video) through the clip."""
     from sam2.sam2_video_predictor import SAM2VideoPredictor
 
@@ -65,7 +65,7 @@ def track_box(video: str, out: str, box: tuple[float, float, float, float], fram
                                    capture_output=True, text=True, check=True).stdout.strip() or fw)
         k = fw / src_w if src_w else 1.0
         b = np.array([v * k for v in box], np.float32)
-        pred = SAM2VideoPredictor.from_pretrained("facebook/sam2.1-hiera-large", device=device)
+        pred = SAM2VideoPredictor.from_pretrained(model, device=device)
         masks: list[np.ndarray] = [np.zeros((fh, fw), np.uint8)] * n
         ctx = torch.autocast("cuda", dtype=torch.bfloat16) if device == "cuda" else torch.autocast("cpu", enabled=False)
         with torch.inference_mode(), ctx:
