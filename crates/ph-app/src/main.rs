@@ -10,14 +10,16 @@ mod blender;
 mod bodyshadow;
 mod camtrack;
 mod export;
+mod fit;
 mod glass;
 mod glass_track;
 mod lightmap;
-mod matching;
+mod manual;
 mod media_cache;
 mod paint;
 mod render;
 mod roto;
+mod scenematch;
 mod scopes;
 mod script;
 mod selection;
@@ -49,6 +51,16 @@ impl eframe::App for PhotoHop {
 }
 
 fn main() -> eframe::Result {
+    // `photohop --manual out.html` writes the manual (for the release packages) and exits.
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.get(1).is_some_and(|a| a == "--manual") {
+        let out = args.get(2).map_or_else(|| std::path::PathBuf::from("PhotoHop-Manual.html"), std::path::PathBuf::from);
+        if let Err(e) = std::fs::write(&out, manual::html(env!("CARGO_PKG_VERSION"))) {
+            eprintln!("could not write {}: {e}", out.display());
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,photohop=info")).init();
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

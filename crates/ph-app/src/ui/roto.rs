@@ -312,12 +312,6 @@ fn shape_slider(app: &mut App, ui: &mut egui::Ui, (id, idx): (LayerId, usize), l
     ui.end_row();
 }
 
-pub fn section(app: &mut App, ui: &mut egui::Ui, layer: &ph_core::Layer) {
-    egui::CollapsingHeader::new(format!("Roto shapes ({})", layer.roto.len())).default_open(!layer.roto.is_empty()).show(ui, |ui| {
-        shape_list(app, ui, layer, RotoTarget::Mask);
-    });
-}
-
 /// The editable list of shapes (layer roto mask or glass panes) with the pen hint.
 pub fn shape_list(app: &mut App, ui: &mut egui::Ui, layer: &ph_core::Layer, target: RotoTarget) {
     let id = layer.id;
@@ -326,7 +320,7 @@ pub fn shape_list(app: &mut App, ui: &mut egui::Ui, layer: &ph_core::Layer, targ
     let editing_here = app.roto_target == target;
     {
         ui.label(egui::RichText::new("Pen (P): click points, drag to curve, click the first point to close. The diamond button keys the shape so it can follow you.").weak().small());
-        if ui.button(if target == RotoTarget::Glass { "Draw a pane" } else { "New shape" }).clicked() {
+        if ui.button(if target == RotoTarget::Glass { "Draw a pane" } else { "Draw a shape" }).clicked() {
             app.tool = crate::app::Tool::Roto;
             app.roto_target = target;
             app.roto_edit = None;
@@ -354,7 +348,7 @@ pub fn shape_list(app: &mut App, ui: &mut egui::Ui, layer: &ph_core::Layer, targ
                     app.edit("Roto mode", |d| d.layer_mut(id).and_then(|l| shapes_mut(l, target)).and_then(|v| v.get_mut(i)).map_or((), |s| s.mode = mode));
                 }
                 let mut inv = s.invert;
-                if ui.checkbox(&mut inv, "Inv").changed() {
+                if ui.checkbox(&mut inv, "Invert").changed() {
                     app.edit("Invert roto shape", |d| d.layer_mut(id).and_then(|l| shapes_mut(l, target)).and_then(|v| v.get_mut(i)).map_or((), |s| s.invert = inv));
                 }
                 let keyed = s.path.key_index_at(t).is_some();

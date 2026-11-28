@@ -19,7 +19,7 @@ Then point PhotoHop at the environment's Python (AI ▸ Settings, or `PHOTOHOP_A
 | `video-matte IN.mp4 OUT.mp4` | BiRefNet + MatAnyone 2 (S-Lab, non-commercial) | cut a person out of a whole clip |
 | `track IN.mp4 OUT.mp4 --box x0,y0,x1,y1` | SAM 2.1 large (Apache-2.0) | follow a region (e.g. a window) through a clip |
 | `remove IN OUT --prompt "toy gun"` | SAM 3 + FLUX.2 klein 4B (Apache-2.0) | repaint an object away; output is an RGBA patch limited to the object (needs `diffusers`) |
-| `harmonize COMP MASK OUT` | Harmonizer (CC BY-NC-SA, downloaded on first use, ~20 MB) | AI auto-colour: predicts temperature / brightness / contrast / saturation / highlight / shadow; PhotoHop fits its own curves to the change |
+| `harmonize COMP MASK OUT` | Harmonizer (CC BY-NC-SA, downloaded on first use, ~20 MB) | AI colour match: predicts temperature / brightness / contrast / saturation / highlight / shadow; PhotoHop fits its own colour sliders (exposure, temperature, tint, contrast, saturation, shadow level) to the change |
 | `camera-solve IN.mp4 camera.json` | Depth Anything 3 (DA3 Nested Giant: CC BY-NC; DA3 Base/Metric: Apache-2.0) | per-frame 3D camera (metric), lens and ground plane for the Blender bridge |
 | `body-motion IN.mp4 body.json --mask M.mp4` | SAM 3D Body (SAM License; code + weights downloaded on first use) | per-frame 3D body mesh (Blender Mesh Cache .pc2) and hand tracks for props |
 | `depth IN OUT.png` | Depth Anything 3 | depth map for depth of field (white = near) |

@@ -2,7 +2,10 @@
 
 mod colour;
 mod curves;
+mod cutout;
+mod fit;
 mod glass;
+pub mod help;
 mod inspector;
 mod integration;
 mod layers;
@@ -10,6 +13,7 @@ mod menu;
 pub mod roto;
 mod timeline;
 mod viewer;
+pub mod widgets;
 
 use crate::app::{App, Tool};
 pub use curves::CurveChannel;
@@ -62,6 +66,7 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
     app.scopes.window(ui.ctx());
     menu::ai_window(app, ui.ctx());
     glass::window(app, ui.ctx());
+    help::window(app, ui.ctx());
 
     if app.playing {
         ui.ctx().request_repaint();
@@ -69,6 +74,14 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui, rs: &egui_wgpu::RenderState) {
 }
 
 fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
+    if ctx.input(|i| i.key_pressed(egui::Key::F1)) {
+        if app.help.open {
+            app.help.open = false;
+        } else {
+            let page = if app.help.page.is_empty() { "start".to_owned() } else { app.help.page.clone() };
+            app.help.open_page(&page);
+        }
+    }
     if ctx.egui_wants_keyboard_input() {
         return;
     }

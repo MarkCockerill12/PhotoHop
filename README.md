@@ -16,6 +16,10 @@ and lens look so the result reads as one image.
 
 It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow this job needs.
 
+**Manual:** press **F1** in the app (searchable, built in), open
+[`docs/PhotoHop-Manual.html`](docs/PhotoHop-Manual.html), or use `PhotoHop-Manual.html` in the
+release download. It covers every tool and walks through a first composite step by step.
+
 > **Status: feature-complete for the core workflow** (v0.4): editing, masks and roto, grading and
 > matching, relighting and shadows, AI cutouts / auto colour / object removal, 3D camera solve, body
 > motion and the Blender round-trip. Expect rough edges.
@@ -31,8 +35,13 @@ It is deliberately small: only the parts of a GIMP + DaVinci Resolve workflow th
 - Crop, paint layers with a soft brush and eraser (pressure-free for now), colour layers
 - Per-layer colour grade: exposure, temperature/tint, lift/gamma/gain colour wheels, contrast/pivot,
   saturation — all keyframable
-- **Match colour** without AI — *Surroundings* (default) matches your black level and colour cast to the
-  scene right around you, like a colourist would; also colour cast only, tone only, or full transfer
+- **Fit into the scene** — *One-click fit* matches colour, adds a ground shadow (same sun as the other
+  shadows in the scene) and copies the background's grain. **Match colours** works for objects of any
+  colour: it matches only the scene's light colour (measured on grey/white parts), black/white levels
+  and saturation, so a deep-blue character stays blue. The result is written into the ordinary colour
+  sliders, and a **Match strength** slider moves them between *Original* and *Matched*
+- **Split into separate objects** — one picture with several figures becomes one layer per figure,
+  each with its own feet, shadow and colour match
 - Layer masks: paint to hide (brush) or reveal (eraser), invert, toggle
 - Selections straight into masks (M): rectangle, ellipse, lasso, magic wand; Shift adds, Alt subtracts, feather
 - **Replace window / screen** (AI menu): show another clip through a window, TV or phone screen in
@@ -109,10 +118,10 @@ cargo run --release -p photohop -- photo.jpg  # open a photo, video or .phop pro
 | Key | Action | Key | Action |
 |---|---|---|---|
 | V | Move tool | Space | Play / pause |
-| M | Select → mask (rect / ellipse / lasso / wand) | | |
+| M | Select an area → cut-out (rect / ellipse / lasso / wand) | F1 | Manual |
 | C | Crop tool (Enter applies, Esc cancels) | ← / → | Previous / next frame |
 | B / E | Brush / eraser | Home | Go to start |
-| P | Roto pen (Enter closes, Del removes point, Esc done) | | |
+| P | Pen: cut-out shapes (Enter closes, Del removes point, Esc done) | | |
 | H | Hand (pan) — or middle-drag / Space-drag | K | Toggle keyframes on the selected layer |
 | S | Show / hide scopes | | |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo | Ctrl+0 | Fit canvas to window |
@@ -151,8 +160,8 @@ fits a task can be plugged in; the defaults below were benchmarked on an RTX 407
 | Human normals (relighting) | Sapiens2 1B | MoGe-2 normals |
 | Scene depth | Depth Anything 3 Metric-Large (Apache-2.0) | MoGe-2, DA3 Giant (non-commercial) |
 
-**Available now** (AI menu): **Auto colour** (Harmonizer predicts temperature / brightness / contrast /
-saturation / highlights / shadows; PhotoHop applies the change as your layer's editable R/G/B curves —
+**Available now** (AI menu): **Match colours with AI** (Harmonizer predicts temperature / brightness /
+contrast / saturation / highlights / shadows; PhotoHop fits its own colour sliders to that suggestion —
 the AI never touches your pixels), *Cut out subject* (BiRefNet), *Mask from text* (SAM 3, e.g. "person",
 "toy gun"), *Video cutout* and *Track a region* (MatAnyone 2 / SAM 2.1), *Estimate normals* for relighting
 (Sapiens2), and *Remove object* — the one tool that paints: FLUX.2 klein repaints only inside the

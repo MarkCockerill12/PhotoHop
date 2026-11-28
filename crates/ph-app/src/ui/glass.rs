@@ -34,10 +34,11 @@ pub fn section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
     if !matches!(layer.content, LayerContent::Media { .. }) {
         return;
     }
-    egui::CollapsingHeader::new("Replace window / screen").default_open(false).show(ui, |ui| {
-        ui.label(egui::RichText::new("Show another clip through a window, TV or phone screen.").weak());
-        if ui.button("Open panel").clicked() {
-            app.glass_setup(layer.id);
+    let on = layer.glass.as_ref().is_some_and(|g| g.enabled);
+    let id = layer.id;
+    super::widgets::section(app, ui, 0, "Replace a window or screen", "Show another picture or clip through a window, TV or phone screen in this layer. Reflections and anything in front stay.", "window", on, |app, ui| {
+        if ui.button(if on { "Open the window panel" } else { "Start (opens a step-by-step panel)" }).clicked() {
+            app.glass_setup(id);
             app.glass_panel = true;
         }
     });

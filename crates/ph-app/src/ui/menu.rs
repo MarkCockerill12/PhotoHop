@@ -95,10 +95,13 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             }
         });
         ui.menu_button("Layer", |ui| {
-            if ui.button("New paint layer").clicked() {
+            if ui.button("Import photo / video…  (Ctrl+I)").clicked() {
+                import_dialog(app);
+            }
+            if ui.button("New paint layer").on_hover_text("An empty layer to paint on with the Brush").clicked() {
                 app.add_paint_layer();
             }
-            if ui.button("New colour layer").clicked() {
+            if ui.button("New colour layer").on_hover_text("A layer filled with one colour (e.g. a tint with a blend mode)").clicked() {
                 app.add_solid_layer();
             }
             if ui.button("Duplicate  (Ctrl+D)").clicked() {
@@ -107,59 +110,77 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
             if ui.button("Delete  (Del)").clicked() {
                 app.delete_selected();
             }
-        });
-        ui.menu_button("AI", |ui| {
+            ui.separator();
+            let sel = app.selected;
             let busy = app.ai_running();
-            if ui.add_enabled(!busy, egui::Button::new("Auto colour (match me to the scene)")).on_hover_text("Harmonizer suggests the colour change; PhotoHop applies it as editable curves").clicked()
-                && let Err(e) = app.start_ai(crate::ai::AiTask::AutoColour)
-            {
-                app.status = format!("AI: {e:#}");
-            }
-            if ui.add_enabled(!busy, egui::Button::new("Cut out subject (selected layer)")).clicked()
+            if ui.add_enabled(sel.is_some() && !busy, egui::Button::new("Remove background (AI)")).clicked()
                 && let Err(e) = app.start_ai(crate::ai::AiTask::Matte)
             {
                 app.status = format!("AI: {e:#}");
             }
-            if ui.add_enabled(!busy, egui::Button::new("Mask from text…")).clicked() {
+            if ui.add_enabled(sel.is_some(), egui::Button::new("Split into separate objects")).on_hover_text("One layer per object, e.g. three figures in one picture").clicked()
+                && let Some(id) = sel
+                && let Err(e) = app.split_objects(id)
+            {
+                app.status = format!("Split: {e:#}");
+            }
+            if ui.add_enabled(sel.is_some(), egui::Button::new("One-click fit into the scene")).on_hover_text("Colour match + ground shadow + grain").clicked()
+                && let Some(id) = sel
+            {
+                app.status = app.auto_fit(id).unwrap_or_else(|e| format!("Fit failed: {e:#}"));
+            }
+        });
+        ui.menu_button("AI", |ui| {
+            let busy = app.ai_running();
+            let run = |app: &mut App, task: crate::ai::AiTask| {
+                if let Err(e) = app.start_ai(task) {
+                    app.status = format!("AI: {e:#}");
+                }
+            };
+            ui.label(egui::RichText::new("Photos").small().weak());
+            if ui.add_enabled(!busy, egui::Button::new("Remove background")).on_hover_text("Keep the main subject of the selected layer, hide the rest").clicked() {
+                run(app, crate::ai::AiTask::Matte);
+            }
+            if ui.add_enabled(!busy, egui::Button::new("Keep only… (describe it)")).on_hover_text("Type what to keep, e.g. \"person\" or \"toy gun\"").clicked() {
                 app.ai.show_dialog = true;
             }
-            if ui.add_enabled(!busy, egui::Button::new("Remove object…")).clicked() {
+            if ui.add_enabled(!busy, egui::Button::new("Remove an object…")).on_hover_text("Erase something from the picture; AI fills the gap (the only AI tool that paints)").clicked() {
                 app.ai.show_dialog = true;
+            }
+            if ui.add_enabled(!busy, egui::Button::new("Match colours with AI")).on_hover_text("AI suggests how the selected layer should look in the scene; applied as normal colour sliders").clicked() {
+                run(app, crate::ai::AiTask::AutoColour);
             }
             ui.separator();
-            if ui.add_enabled(!busy, egui::Button::new("Video: cut out subject (whole clip)")).clicked()
-                && let Err(e) = app.start_ai(crate::ai::AiTask::VideoCutout)
-            {
-                app.status = format!("AI: {e:#}");
+            ui.label(egui::RichText::new("Video").small().weak());
+            if ui.add_enabled(!busy, egui::Button::new("Remove background (whole clip)")).clicked() {
+                run(app, crate::ai::AiTask::VideoCutout);
             }
-            if ui.add_enabled(!busy, egui::Button::new("Video: solve 3D camera (for Blender)")).on_hover_text("Depth Anything 3 recovers the phone's 3D movement and the floor").clicked()
-                && let Err(e) = app.start_ai(crate::ai::AiTask::CameraSolve)
-            {
-                app.status = format!("AI: {e:#}");
+            if ui.add_enabled(!busy, egui::Button::new("Track a region… (draw a box)")).on_hover_text("Follow something through the clip, e.g. a window, and make a moving mask of it").clicked() {
+                app.ai.picking_box = true;
+                app.status = "Drag a box around the region to track (e.g. the window glass) on the selected video layer.".into();
             }
-            if ui.add_enabled(!busy, egui::Button::new("Video: capture body motion (for Blender)")).on_hover_text("SAM 3D Body: your 3D body every frame, for real shadows, occlusion and props in your hands. Needs the video cutout first; solve the camera first if the phone moves.").clicked()
-                && let Err(e) = app.start_ai(crate::ai::AiTask::BodyMotion)
-            {
-                app.status = format!("AI: {e:#}");
-            }
-            if ui.add_enabled(!busy, egui::Button::new("Replace window / screen…")).on_hover_text("Show another clip through a window, TV or phone screen (settings in the inspector)").clicked() {
+            if ui.add_enabled(!busy, egui::Button::new("Replace a window or screen…")).on_hover_text("Show another clip through a window, TV or phone screen").clicked() {
                 if let Some(id) = app.selected {
                     app.glass_setup(id);
                     app.glass_panel = true;
-                    app.status = "Replace window / screen: follow the steps in the panel.".into();
+                    app.status = "Replace a window or screen: follow the steps in the panel.".into();
                 } else {
                     app.status = "Select the layer with the window or screen first.".into();
                 }
             }
-            if ui.add_enabled(!busy, egui::Button::new("Video: track a region… (draw a box)")).clicked() {
-                app.ai.picking_box = true;
-                app.status = "Drag a box around the region to track (e.g. the window glass) on the selected video layer.".into();
+            ui.separator();
+            ui.label(egui::RichText::new("For Blender").small().weak());
+            if ui.add_enabled(!busy, egui::Button::new("Work out the camera movement")).on_hover_text("3D camera solve (Depth Anything 3): recovers how the phone moved and where the floor is, for Blender").clicked() {
+                run(app, crate::ai::AiTask::CameraSolve);
+            }
+            if ui.add_enabled(!busy, egui::Button::new("Capture body motion")).on_hover_text("SAM 3D Body: your 3D body every frame, for real shadows and props in your hands in Blender. Remove the background of the clip first.").clicked() {
+                run(app, crate::ai::AiTask::BodyMotion);
             }
             ui.separator();
-            if ui.button("Settings…").clicked() {
+            if ui.button("AI settings…").clicked() {
                 app.ai.show_dialog = true;
             }
-            ui.label(egui::RichText::new("AI makes masks and colour/light settings; only 'Remove object' paints, and only inside the object.").small().weak());
+            ui.label(egui::RichText::new("AI makes masks and colour/light settings. Only \"Remove an object\" paints, and only inside that object.").small().weak());
         });
         ui.menu_button("View", |ui| {
             ui.checkbox(&mut app.scopes.show, "Scopes  (S)");
@@ -180,6 +201,25 @@ pub fn menu_bar(app: &mut App, ui: &mut egui::Ui) {
                 app.media.proxy_div = div;
                 app.media.clear();
             }
+        });
+        ui.menu_button("Help", |ui| {
+            if ui.button("Manual  (F1)").clicked() {
+                app.help.open_page("start");
+            }
+            if ui.button("Your first composite (step by step)").clicked() {
+                app.help.open_page("first-composite");
+            }
+            if ui.button("Keyboard shortcuts").clicked() {
+                app.help.open_page("shortcuts");
+            }
+            if ui.button("Open the manual in your web browser").clicked() {
+                app.status = match crate::ui::help::open_in_browser() {
+                    Ok(p) => format!("Manual opened in your browser ({}).", p.display()),
+                    Err(e) => format!("Could not open the browser: {e:#}"),
+                };
+            }
+            ui.separator();
+            ui.label(egui::RichText::new(format!("PhotoHop {}", env!("CARGO_PKG_VERSION"))).weak());
         });
     });
 }
@@ -244,19 +284,19 @@ pub fn toolbar(app: &mut App, ui: &mut egui::Ui) {
 
 pub fn ai_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.ai.show_dialog;
-    egui::Window::new("AI masks").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
-        ui.label("Describe what to select in the selected layer:");
+    egui::Window::new("AI: keep or remove by description").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+        ui.label("Keep only this (describe it, e.g. person, dog, toy gun):");
         let r = ui.text_edit_singleline(&mut app.ai.prompt);
         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let busy = app.ai_running();
         ui.horizontal(|ui| {
-            if (ui.add_enabled(!busy, egui::Button::new("Make mask (SAM 3)")).clicked() || enter) && !busy {
+            if (ui.add_enabled(!busy, egui::Button::new("Keep only this")).clicked() || enter) && !busy {
                 let p = app.ai.prompt.trim().to_owned();
                 if let Err(e) = app.start_ai(crate::ai::AiTask::Segment(p)) {
                     app.status = format!("AI: {e:#}");
                 }
             }
-            if ui.add_enabled(!busy, egui::Button::new("Auto cutout (BiRefNet)")).clicked()
+            if ui.add_enabled(!busy, egui::Button::new("Remove background instead")).clicked()
                 && let Err(e) = app.start_ai(crate::ai::AiTask::Matte)
             {
                 app.status = format!("AI: {e:#}");
@@ -266,7 +306,7 @@ pub fn ai_window(app: &mut App, ctx: &egui::Context) {
             }
         });
         ui.separator();
-        ui.label("Remove an object (AI repaints only that object's area, as a separate patch layer):");
+        ui.label("Remove an object from the picture (AI fills only that area, as a separate patch layer you can hide):");
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut app.ai.remove_prompt).hint_text("e.g. toy gun"));
             if ui.add_enabled(!busy, egui::Button::new("Remove")).clicked() {
@@ -277,7 +317,7 @@ pub fn ai_window(app: &mut App, ctx: &egui::Context) {
             }
         });
         ui.separator();
-        ui.label("Python with photohop-ai installed (see ai/README.md):");
+        ui.label("AI settings: the Python that has the PhotoHop AI tools installed (see the manual, AI tools):");
         ui.text_edit_singleline(&mut app.ai.python);
     });
     app.ai.show_dialog = open;

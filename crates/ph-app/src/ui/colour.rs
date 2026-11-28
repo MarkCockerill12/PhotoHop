@@ -1,8 +1,8 @@
-//! Colour section of the inspector: Resolve-style lift/gamma/gain wheels, basic grade sliders,
-//! non-AI colour matching and the layer mask controls.
+//! "Colour adjustments" section of the inspector: everyday sliders, colour wheels
+//! (lift/gamma/gain, shown as shadows/midtones/highlights), curves and one-colour changes.
 
+use super::widgets::{hint, section, track};
 use crate::app::App;
-use crate::matching::MatchMode;
 use ph_core::{Animated, Grade, Layer, LayerId};
 use std::f32::consts::TAU;
 
@@ -74,25 +74,21 @@ fn grade_edit(app: &mut App, id: LayerId, label: &str, f: impl FnOnce(&mut Grade
     }
 }
 
-fn track(app: &mut App, r: &egui::Response) {
-    if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged() && !r.has_focus()) {
-        app.end_gesture();
-    }
-}
-
 /// Slider row for a scalar grade parameter.
+#[allow(clippy::too_many_arguments)]
 fn scalar(
     app: &mut App,
     ui: &mut egui::Ui,
     id: LayerId,
     label: &str,
+    tip: &str,
     value: f32,
     range: std::ops::RangeInclusive<f32>,
     pick: fn(&mut Grade) -> &mut Animated<f32>,
 ) {
-    ui.label(label);
+    ui.label(label).on_hover_text(tip);
     let mut v = value;
-    let r = ui.add(egui::Slider::new(&mut v, range).max_decimals(3));
+    let r = ui.add(egui::Slider::new(&mut v, range).max_decimals(3)).on_hover_text(tip);
     if r.changed() {
         grade_edit(app, id, label, |g, t, auto| pick(g).set(t, v, auto));
     }
@@ -100,126 +96,83 @@ fn scalar(
     ui.end_row();
 }
 
-pub fn colour_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
+pub fn colour_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer, step: u8) {
     let id = layer.id;
     let t = app.time;
     let g = layer.grade.clone();
-    egui::CollapsingHeader::new("Colour").default_open(true).show(ui, |ui| {
+    let what = "Adjust brightness and colour by hand. A colour match (step above) sets these sliders for you.";
+    section(app, ui, step, "Colour adjustments", what, "colour", false, |app, ui| {
         ui.horizontal(|ui| {
             let mut enabled = g.enabled;
-            if ui.checkbox(&mut enabled, "Enabled").changed() {
+            if ui.checkbox(&mut enabled, "On").on_hover_text("Compare with and without all colour adjustments").changed() {
                 app.edit("Toggle grade", |d| d.layer_mut(id).map_or((), |l| l.grade.enabled = enabled));
             }
-            if ui.button("Reset colour").clicked() {
+            if ui.button("Reset all colour").on_hover_text("Back to the original colours (also forgets the colour match)").clicked() {
                 app.edit("Reset colour", |d| d.layer_mut(id).map_or((), |l| l.grade = Grade::default()));
             }
         });
 
-        // Wheels: lift / gamma / gain, each with a master slider underneath.
-        ui.horizontal(|ui| {
-            let wheels: [WheelSpec; 3] = [
-                ("Lift", g.lift.at(t), 0.25, |g| &mut g.lift, -0.5..=0.5),
-                ("Gamma", g.gamma.at(t), 0.5, |g| &mut g.gamma, -1.0..=1.0),
-                ("Gain", g.gain.at(t), 0.5, |g| &mut g.gain, 0.0..=4.0),
-            ];
-            for (name, mut val, range, pick, master_range) in wheels {
-                ui.vertical(|ui| {
-                    ui.label(name);
-                    let r = wheel(ui, name, &mut val, range);
-                    if r.changed() {
-                        grade_edit(app, id, name, |g, t, auto| pick(g).set(t, val, auto));
-                    }
-                    if r.drag_stopped() || r.double_clicked() {
-                        app.end_gesture();
-                    }
-                    let r = ui.add(egui::DragValue::new(&mut val[3]).range(master_range).speed(0.005).max_decimals(3));
-                    if r.changed() {
-                        grade_edit(app, id, name, |g, t, auto| pick(g).set(t, val, auto));
-                    }
-                    track(app, &r);
+        egui::Grid::new("grade_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
+            scalar(app, ui, id, "Exposure", "Overall brightness in camera stops (+1 = twice as bright)", g.exposure.at(t), -5.0..=5.0, |g| &mut g.exposure);
+            scalar(app, ui, id, "Temperature", "Colour of the light: left = cooler / bluer, right = warmer / more orange", g.temperature.at(t), -2.0..=2.0, |g| &mut g.temperature);
+            scalar(app, ui, id, "Tint", "Left = greener, right = more magenta (fixes green or pink casts)", g.tint.at(t), -2.0..=2.0, |g| &mut g.tint);
+            scalar(app, ui, id, "Contrast", "Difference between darks and brights (1 = unchanged)", g.contrast.at(t), 0.0..=2.0, |g| &mut g.contrast);
+            scalar(app, ui, id, "Saturation", "Colour intensity: 0 = black and white, 1 = unchanged", g.saturation.at(t), 0.0..=2.0, |g| &mut g.saturation);
+            // Shadow level = Lift master.
+            let lift = g.lift.at(t);
+            let tip = "Raises or lowers the darkest parts (black level). Same as the Shadows wheel's number.";
+            ui.label("Shadow level").on_hover_text(tip);
+            let mut v = lift[3];
+            let r = ui.add(egui::Slider::new(&mut v, -0.5..=0.5).max_decimals(3)).on_hover_text(tip);
+            if r.changed() {
+                grade_edit(app, id, "Shadow level", |g, t, auto| {
+                    let mut l = g.lift.at(t);
+                    l[3] = v;
+                    g.lift.set(t, l, auto);
                 });
             }
+            track(app, &r);
+            ui.end_row();
         });
 
-        egui::Grid::new("grade_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
-            scalar(app, ui, id, "Exposure", g.exposure.at(t), -5.0..=5.0, |g| &mut g.exposure);
-            scalar(app, ui, id, "Temperature", g.temperature.at(t), -1.0..=1.0, |g| &mut g.temperature);
-            scalar(app, ui, id, "Tint", g.tint.at(t), -1.0..=1.0, |g| &mut g.tint);
-            scalar(app, ui, id, "Contrast", g.contrast.at(t), 0.0..=2.0, |g| &mut g.contrast);
-            scalar(app, ui, id, "Pivot", g.pivot.at(t), 0.0..=1.0, |g| &mut g.pivot);
-            scalar(app, ui, id, "Saturation", g.saturation.at(t), 0.0..=2.0, |g| &mut g.saturation);
-        });
-
-        egui::CollapsingHeader::new("Curves").default_open(false).show(ui, |ui| {
-            crate::ui::curves::curves_editor(app, ui, id, &g);
-        });
-        egui::CollapsingHeader::new("Qualifier (select a colour range)").default_open(false).show(ui, |ui| {
-            crate::ui::curves::qualifier_controls(app, ui, id, &g);
-        });
-
-        ui.separator();
-        ui.label(egui::RichText::new("Match colour (no AI)").strong());
-        let others: Vec<(LayerId, String)> =
-            app.doc.layers.iter().filter(|l| l.id != id).map(|l| (l.id, l.name.clone())).collect();
-        let current = app
-            .match_reference
-            .and_then(|r| others.iter().find(|(o, _)| *o == r))
-            .map_or("Layer below".to_owned(), |(_, n)| n.clone());
-        egui::ComboBox::from_id_salt("match_ref").selected_text(format!("Reference: {current}")).show_ui(ui, |ui| {
-            ui.selectable_value(&mut app.match_reference, None, "Layer below");
-            for (oid, name) in &others {
-                ui.selectable_value(&mut app.match_reference, Some(*oid), name);
-            }
-        });
-        egui::ComboBox::from_id_salt("match_mode").selected_text(app.match_mode.label()).show_ui(ui, |ui| {
-            for m in MatchMode::ALL {
-                ui.selectable_value(&mut app.match_mode, m, m.label());
-            }
-        });
-        if ui.add_enabled(!app.ai_running(), egui::Button::new("AI auto colour")).on_hover_text("Harmonizer suggests the change; applied as editable R/G/B curves").clicked()
-            && let Err(e) = app.start_ai(crate::ai::AiTask::AutoColour)
-        {
-            app.status = format!("AI: {e:#}");
-        }
-        if ui.button("Match").on_hover_text("Measure both layers and set the match to fit").clicked()
-            && let Err(e) = app.match_colour()
-        {
-            app.status = format!("Match failed: {e:#}");
-        }
-        egui::Grid::new("match_grid").num_columns(2).show(ui, |ui| {
-            scalar(app, ui, id, "Match amount", g.match_amount.at(t), 0.0..=1.0, |g| &mut g.match_amount);
-        });
-    });
-
-    egui::CollapsingHeader::new("Mask").default_open(true).show(ui, |ui| match &layer.mask {
-        None => {
-            ui.label("Paint to hide parts of this layer (e.g. cut yourself out).");
-            if ui.button("Add mask").clicked() {
-                app.add_mask();
-            }
-        }
-        Some(m) => {
-            let (mut enabled, mut invert) = (m.enabled, m.invert);
+        egui::CollapsingHeader::new("Colour wheels (shadows / midtones / highlights)").id_salt("wheels").default_open(false).show(ui, |ui| {
+            hint(ui, "Drag the dot towards a colour to tint that range; double-click to reset. The number under each wheel brightens or darkens that range. (Colourists call these Lift, Gamma and Gain.)");
             ui.horizontal(|ui| {
-                if ui.checkbox(&mut enabled, "Enabled").changed() {
-                    app.edit("Toggle mask", |d| {
-                        if let Some(mask) = d.layer_mut(id).and_then(|l| l.mask.as_mut()) {
-                            mask.enabled = enabled;
+                let wheels: [WheelSpec; 3] = [
+                    ("Shadows", g.lift.at(t), 0.25, |g| &mut g.lift, -0.5..=0.5),
+                    ("Midtones", g.gamma.at(t), 0.5, |g| &mut g.gamma, -1.0..=1.0),
+                    ("Highlights", g.gain.at(t), 0.5, |g| &mut g.gain, 0.0..=4.0),
+                ];
+                for (name, mut val, range, pick, master_range) in wheels {
+                    ui.vertical(|ui| {
+                        ui.label(name);
+                        let r = wheel(ui, name, &mut val, range);
+                        if r.changed() {
+                            grade_edit(app, id, name, |g, t, auto| pick(g).set(t, val, auto));
                         }
-                    });
-                }
-                if ui.checkbox(&mut invert, "Invert").changed() {
-                    app.edit("Invert mask", |d| {
-                        if let Some(mask) = d.layer_mut(id).and_then(|l| l.mask.as_mut()) {
-                            mask.invert = invert;
+                        if r.drag_stopped() || r.double_clicked() {
+                            app.end_gesture();
                         }
+                        let r = ui.add(egui::DragValue::new(&mut val[3]).range(master_range).speed(0.005).max_decimals(3));
+                        if r.changed() {
+                            grade_edit(app, id, name, |g, t, auto| pick(g).set(t, val, auto));
+                        }
+                        track(app, &r);
                     });
                 }
             });
-            ui.checkbox(&mut app.edit_mask, "Edit mask (Brush hides, Eraser reveals)");
-            if ui.button("Delete mask").clicked() {
-                app.delete_mask();
-            }
-        }
+            egui::Grid::new("pivot_grid").num_columns(2).spacing([6.0, 4.0]).show(ui, |ui| {
+                scalar(app, ui, id, "Contrast centre", "The brightness that Contrast leaves unchanged (pivot)", g.pivot.at(t), 0.0..=1.0, |g| &mut g.pivot);
+            });
+        });
+
+        egui::CollapsingHeader::new("Curves").id_salt("curves").default_open(false).show(ui, |ui| {
+            hint(ui, "Bend the line to remap brightness: up = brighter. Pick Red, Green or Blue to change one colour channel.");
+            crate::ui::curves::curves_editor(app, ui, id, &g);
+        });
+        egui::CollapsingHeader::new("Change one colour only").id_salt("qualifier").default_open(false).show(ui, |ui| {
+            hint(ui, "Pick a range of colours (e.g. a green shirt) and change only that: shift its hue, saturation or brightness. Turn on Show matte to see what's selected (white).");
+            crate::ui::curves::qualifier_controls(app, ui, id, &g);
+        });
     });
 }

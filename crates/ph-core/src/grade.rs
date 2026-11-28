@@ -36,6 +36,9 @@ pub struct Grade {
     pub match_amount: Animated<f32>,
     pub curves: Curves,
     pub qualifier: Qualifier,
+    /// Last "Match to scene" result (slider values before/after and the strength between them).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_match: Option<crate::look::SceneMatch>,
 }
 
 impl Default for Grade {
@@ -57,6 +60,7 @@ impl Default for Grade {
             match_amount: Animated::new(0.0),
             curves: Curves::default(),
             qualifier: Qualifier::default(),
+            scene_match: None,
         }
     }
 }

@@ -444,26 +444,36 @@ impl App {
                 let before = image::open(&job.aux[0])?.to_rgb8();
                 let mask = image::open(&job.aux[1])?.to_luma8();
                 let after = image::open(&job.output)?.to_rgb8();
-                let [r, g, b] = crate::matching::fit_curves(before.as_raw(), after.as_raw(), mask.as_raw(), 8);
+                // Fit the everyday sliders to the AI's suggestion (pixels inside the subject only):
+                // the result is ordinary, editable slider values, never the AI's pixels.
+                let step = ((mask.as_raw().iter().filter(|m| **m >= 230).count() / 20_000).max(1)) as usize;
+                let (mut bpx, mut apx) = (Vec::new(), Vec::new());
+                for (i, m) in mask.as_raw().iter().enumerate().filter(|(_, m)| **m >= 230).step_by(step) {
+                    let _ = m;
+                    let b = &before.as_raw()[i * 3..i * 3 + 3];
+                    let a = &after.as_raw()[i * 3..i * 3 + 3];
+                    bpx.push(crate::scenematch::Px { rgb: std::array::from_fn(|c| ph_media::color::srgb_to_linear(b[c] as f32 / 255.0)), w: 1.0 });
+                    apx.push(std::array::from_fn(|c| a[c] as f32 / 255.0));
+                }
+                if bpx.is_empty() {
+                    anyhow::bail!("the AI saw nothing of this layer");
+                }
                 let id = job.layer;
-                self.edit("AI auto colour", |d| {
+                let t = self.time;
+                let auto = self.auto_key;
+                let layer = self.doc.layer(id).context("layer missing")?;
+                let pivot = layer.grade.pivot.at(t);
+                let start = layer.grade.scene_match.map_or_else(|| ph_core::LookSliders::read(&layer.grade, t), |m| m.original);
+                let fitted = crate::scenematch::fit_to_example(&bpx, &apx, ph_core::LookSliders::default(), pivot);
+                self.edit("AI match to scene", |d| {
                     if let Some(l) = d.layer_mut(id) {
-                        l.grade.enabled = true;
-                        l.grade.curves.red = r;
-                        l.grade.curves.green = g;
-                        l.grade.curves.blue = b;
+                        l.grade.apply_scene_match(fitted, ph_core::MatchMethod::Ai, t, auto);
+                        l.grade.match_amount = ph_core::Animated::new(0.0);
                     }
                 });
-                let f = &v["filters"];
-                let pick = |k: &str| f[k].as_f64().unwrap_or(0.0);
                 return Ok(format!(
-                    "AI auto colour applied as R/G/B curves (temp {:+.2}, bright {:+.2}, contrast {:+.2}, sat {:+.2}, highlights {:+.2}, shadows {:+.2}). Edit them in Colour > Curves.",
-                    pick("temperature"),
-                    pick("brightness"),
-                    pick("contrast"),
-                    pick("saturation"),
-                    pick("highlight"),
-                    pick("shadow")
+                    "AI match applied to the colour sliders: {}. Drag Match strength to compare with the original.",
+                    crate::scenematch::describe(&start, &fitted)
                 ));
             }
             if let AiTask::Remove(what) = &job.task {

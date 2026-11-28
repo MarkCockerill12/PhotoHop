@@ -27,13 +27,13 @@ impl Tool {
 
     pub fn label(self) -> &'static str {
         match self {
-            Tool::Move => "Move (V)",
-            Tool::Select => "Select → mask (M)",
-            Tool::Crop => "Crop (C)",
-            Tool::Brush => "Brush (B)",
-            Tool::Eraser => "Eraser (E)",
-            Tool::Roto => "Roto pen — bezier mask shapes (P)",
-            Tool::Hand => "Hand (H)",
+            Tool::Move => "Move (V): drag a layer, corners resize, top handle rotates",
+            Tool::Select => "Select an area (M): rectangle, ellipse, lasso or magic wand; becomes the layer's cut-out",
+            Tool::Crop => "Crop the canvas (C)",
+            Tool::Brush => "Brush (B): paint, or hide parts of the cut-out",
+            Tool::Eraser => "Eraser (E): erase paint, or bring back parts of the cut-out",
+            Tool::Roto => "Pen (P): draw exact cut-out shapes with curves",
+            Tool::Hand => "Hand (H): pan the view (scroll to zoom)",
         }
     }
 
@@ -76,7 +76,6 @@ pub struct App {
     pub depths: HashMap<LayerId, PaintRaster>,
     /// Brush/eraser paint into the selected layer's mask instead of its pixels.
     pub edit_mask: bool,
-    pub match_mode: crate::matching::MatchMode,
     pub match_reference: Option<LayerId>,
     pub curve_channel: crate::ui::CurveChannel,
     pub select_shape: crate::selection::SelectShape,
@@ -109,6 +108,7 @@ pub struct App {
     /// Unsaved changes since last save.
     pub dirty: bool,
     pub auto_key: bool,
+    pub help: crate::ui::help::HelpState,
 }
 
 /// Fraction of the frame height just below the lowest row that has a meaningful run of solid pixels.
@@ -142,7 +142,6 @@ impl App {
             normals: HashMap::new(),
             depths: HashMap::new(),
             edit_mask: false,
-            match_mode: crate::matching::MatchMode::Surroundings,
             match_reference: None,
             curve_channel: Default::default(),
             select_shape: Default::default(),
@@ -167,6 +166,7 @@ impl App {
             status: "Import a photo or video to start (File > Import, or drop files onto the window).".into(),
             dirty: false,
             auto_key: false,
+            help: Default::default(),
         }
     }
 
@@ -708,71 +708,6 @@ impl App {
         crate::render::composite(&mut self.viewer.gpu, &doc, t, &self.paint, &self.masks, &self.normals, &self.depths, |m, mt| media.frame(m, mt));
         let (w, h, px) = self.viewer.gpu.read_back()?;
         Ok(ph_media::Frame::new(w, h, px))
-    }
-
-    /// Match the selected layer's colours to a reference layer (default: the layer below it).
-    pub fn match_colour(&mut self) -> Result<()> {
-        use crate::matching::{MatchMode, stats, surround_stats, transfer};
-        let id = self.selected.context("select the layer to adjust")?;
-        if self.match_mode == MatchMode::Surroundings {
-            let idx = self.doc.layer_index(id).context("layer missing")?;
-            let below: Vec<LayerId> = self.doc.layers[..idx].iter().map(|l| l.id).collect();
-            if below.is_empty() {
-                anyhow::bail!("add a background layer below this one first");
-            }
-            let bg = self.composite_only(|l| below.contains(&l), None)?;
-            let subj = self.composite_only(|l| l == id, Some(id))?;
-            let (s, t) = surround_stats(&bg, &subj).context("nothing visible to measure")?;
-            let (scale, offset) = transfer(&s, &t, MatchMode::Surroundings);
-            let (time, auto) = (self.time, self.auto_key);
-            self.edit("Match colour", |d| {
-                if let Some(l) = d.layer_mut(id) {
-                    l.grade.match_scale = scale;
-                    l.grade.match_offset = offset;
-                    if l.grade.match_amount.at(time) <= 0.0 {
-                        l.grade.match_amount.set(time, 1.0, auto);
-                    }
-                }
-            });
-            self.status = "Matched colour to the surroundings. Use the Match amount slider to blend.".into();
-            return Ok(());
-        }
-        let idx = self.doc.layer_index(id).context("layer missing")?;
-        let reference = self
-            .match_reference
-            .filter(|r| *r != id && self.doc.layer(*r).is_some())
-            .or_else(|| idx.checked_sub(1).map(|i| self.doc.layers[i].id))
-            .context("add a background layer below this one (or pick a reference) first")?;
-        let src = self.layer_frame(id).context("this layer has no pixels yet (video still decoding?)")?;
-        let target = self.layer_frame(reference).context("reference layer has no pixels yet")?;
-        let mask = self.doc.layer(id).and_then(|l| l.mask.as_ref().filter(|m| m.enabled).map(|m| m.invert));
-        let raster = self.masks.get(&id);
-        let mask_fn = |u: f32, v: f32| -> f32 {
-            let Some(r) = raster else { return 1.0 };
-            let x = ((u * r.width as f32) as u32).min(r.width - 1);
-            let y = ((v * r.height as f32) as u32).min(r.height - 1);
-            let m = r.data[(y * r.width + x) as usize][0];
-            if mask == Some(true) { 1.0 - m } else { m }
-        };
-        let s = stats(&src, mask.map(|_| &mask_fn as &dyn Fn(f32, f32) -> f32));
-        let t = stats(&target, None);
-        if s.weight <= 0.0 || t.weight <= 0.0 {
-            anyhow::bail!("nothing visible to measure");
-        }
-        let (scale, offset) = transfer(&s, &t, self.match_mode);
-        let (time, auto) = (self.time, self.auto_key);
-        self.edit("Match colour", |d| {
-            if let Some(l) = d.layer_mut(id) {
-                l.grade.match_scale = scale;
-                l.grade.match_offset = offset;
-                if l.grade.match_amount.at(time) <= 0.0 {
-                    l.grade.match_amount.set(time, 1.0, auto);
-                }
-            }
-        });
-        let name = self.doc.layer(reference).map(|l| l.name.clone()).unwrap_or_default();
-        self.status = format!("Matched colour to \"{name}\" ({}). Use the Match amount slider to blend.", self.match_mode.label());
-        Ok(())
     }
 
     // ---------- playback ----------

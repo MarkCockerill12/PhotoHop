@@ -1,6 +1,7 @@
 //! Inspector: selected layer's properties (all keyframable values have a key toggle), or the
 //! canvas settings when nothing is selected.
 
+use super::widgets::{hint, section};
 use crate::app::App;
 use ph_core::doc::LayerContent;
 use ph_core::{Animated, BlendMode, Layer, LayerId};
@@ -20,12 +21,7 @@ fn key_button<T: ph_core::anim::Lerp>(ui: &mut egui::Ui, a: &Animated<T>, t: f64
         .clicked()
 }
 
-/// Track a widget response as part of an undoable gesture.
-fn track(app: &mut App, r: &egui::Response) {
-    if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged() && !r.has_focus()) {
-        app.end_gesture();
-    }
-}
+use super::widgets::track;
 
 fn with_layer(app: &mut App, id: LayerId, label: &str, f: impl FnOnce(&mut Layer, f64, bool)) {
     let (t, auto) = (app.time, app.auto_key);
@@ -54,35 +50,50 @@ pub fn inspector(app: &mut App, ui: &mut egui::Ui) {
         return;
     };
     let id = layer.id;
-    let t = app.time;
-    ui.heading("Layer");
-    let mut name = layer.name.clone();
-    let r = ui.text_edit_singleline(&mut name);
-    if r.changed() {
-        with_layer(app, id, "Rename", |l, _, _| l.name = name);
-    }
-    track(app, &r);
-    ui.checkbox(&mut app.auto_key, "Auto-key (every change adds a keyframe)");
-
-    ui.separator();
-    egui::Grid::new("layer_grid").num_columns(3).spacing([6.0, 6.0]).show(ui, |ui| {
-        ui.label("Blend");
-        let mut blend = layer.blend;
-        egui::ComboBox::from_id_salt("blend").selected_text(blend.label()).show_ui(ui, |ui| {
-            for m in BlendMode::ALL {
-                ui.selectable_value(&mut blend, m, m.label());
-            }
-        });
-        if blend != layer.blend {
-            app.edit("Blend mode", |d| {
-                if let Some(l) = d.layer_mut(id) {
-                    l.blend = blend;
-                }
-            });
+    let is_background = app.doc.layer_index(id) == Some(0);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Layer").weak());
+        let mut name = layer.name.clone();
+        let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY));
+        if r.changed() {
+            with_layer(app, id, "Rename", |l, _, _| l.name = name);
         }
-        ui.end_row();
+        track(app, &r);
+    });
+    if is_background {
+        hint(ui, "This is the bottom layer: your background. Import yourself (Ctrl+I) to put a layer on top of it; the cut-out, fit and shadow steps appear for that layer.");
+    } else {
+        hint(ui, "Work down the numbered steps. Hover any slider for what it does; \"? Help\" opens the manual.");
+    }
+    ui.separator();
+    if is_background {
+        position_section(app, ui, &layer, 0);
+        crate::ui::colour::colour_section(app, ui, &layer, 0);
+        crate::ui::integration::camera_section(app, ui, &layer, 0);
+        crate::ui::integration::game_section(app, ui, &layer);
+        crate::ui::glass::section(app, ui, &layer);
+    } else {
+        crate::ui::cutout::cutout_section(app, ui, &layer, 1);
+        position_section(app, ui, &layer, 2);
+        crate::ui::fit::fit_section(app, ui, &layer, 3);
+        crate::ui::colour::colour_section(app, ui, &layer, 4);
+        crate::ui::integration::shadow_light_section(app, ui, &layer, 5);
+        crate::ui::integration::camera_section(app, ui, &layer, 6);
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("Extras").weak());
+        crate::ui::integration::game_section(app, ui, &layer);
+        crate::ui::glass::section(app, ui, &layer);
+    }
+    timing_section(app, ui, &layer);
+}
 
-        ui.label("Opacity");
+fn position_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer, step: u8) {
+    let id = layer.id;
+    let t = app.time;
+    let what = "Where the layer sits, how big it is and how it mixes with the layers below. Easiest: drag it on the canvas with the Move tool (V).";
+    section(app, ui, step, "Position & size", what, "position", false, |app, ui| {
+    egui::Grid::new("layer_grid").num_columns(3).spacing([6.0, 6.0]).show(ui, |ui| {
+        ui.label("Opacity").on_hover_text("0% = invisible, 100% = solid");
         let mut op = layer.opacity.at(t) * 100.0;
         let r = ui.add(egui::Slider::new(&mut op, 0.0..=100.0).suffix("%"));
         if r.changed() {
@@ -111,7 +122,7 @@ pub fn inspector(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.end_row();
 
-        ui.label("Scale");
+        ui.label("Size");
         let mut s = tr.scale.at(t).map(|v| v * 100.0);
         let r = ui.horizontal(|ui| {
             let a = ui.add(egui::DragValue::new(&mut s[0]).speed(0.5).suffix("%"));
@@ -139,6 +150,22 @@ pub fn inspector(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.end_row();
 
+        ui.label("Blend mode").on_hover_text("How this layer mixes with the layers below. Normal for almost everything.");
+        let mut blend = layer.blend;
+        egui::ComboBox::from_id_salt("blend").selected_text(blend.label()).show_ui(ui, |ui| {
+            for m in BlendMode::ALL {
+                ui.selectable_value(&mut blend, m, m.label());
+            }
+        });
+        if blend != layer.blend {
+            app.edit("Blend mode", |d| {
+                if let Some(l) = d.layer_mut(id) {
+                    l.blend = blend;
+                }
+            });
+        }
+        ui.end_row();
+
         if let LayerContent::Solid { color, .. } = &layer.content {
             ui.label("Colour");
             let c = color.at(t);
@@ -156,18 +183,38 @@ pub fn inspector(app: &mut App, ui: &mut egui::Ui) {
             ui.end_row();
         }
     });
+    ui.horizontal(|ui| {
+        if ui.button("Reset").on_hover_text("Centre the layer at its original size").clicked() {
+            app.edit("Reset transform", |d| {
+                let canvas = d.canvas.clone();
+                if let Some(l) = d.layer_mut(id) {
+                    l.transform = ph_core::LayerTransform::centered(&canvas);
+                }
+            });
+        }
+        if ui.button("Fit to canvas").on_hover_text("Scale the layer so it fills the canvas").clicked() {
+            let size = app.doc.layer_source_size(layer);
+            let c = &app.doc.canvas;
+            let k = (c.width as f32 / size.x).min(c.height as f32 / size.y);
+            app.edit("Fit to canvas", |d| {
+                let canvas = d.canvas.clone();
+                if let Some(l) = d.layer_mut(id) {
+                    l.transform = ph_core::LayerTransform::centered(&canvas);
+                    l.transform.scale = Animated::new([k, k]);
+                }
+            });
+        }
+    });
+    });
+}
 
-    ui.separator();
-    crate::ui::colour::colour_section(app, ui, &layer);
-    ui.separator();
-    crate::ui::roto::section(app, ui, &layer);
-    crate::ui::glass::section(app, ui, &layer);
-    crate::ui::integration::integration_section(app, ui, &layer);
-
-    ui.separator();
-    ui.heading("Timing");
+fn timing_section(app: &mut App, ui: &mut egui::Ui, layer: &Layer) {
+    let id = layer.id;
+    let what = "When the layer appears on the timeline, and animation keyframes (◆ buttons).";
+    section(app, ui, 0, "Timing & animation", what, "timing", false, |app, ui| {
+    ui.checkbox(&mut app.auto_key, "Animate: every change adds a keyframe").on_hover_text("Auto-key. Off: changes apply to the whole clip. On: each change is keyed at the playhead.");
     egui::Grid::new("timing_grid").num_columns(2).show(ui, |ui| {
-        ui.label("Starts at");
+        ui.label("Starts at").on_hover_text("Time on the timeline where this layer begins");
         let mut start = layer.start;
         let r = ui.add(egui::DragValue::new(&mut start).speed(0.04).range(0.0..=f64::MAX).suffix(" s"));
         if r.changed() {
@@ -176,7 +223,7 @@ pub fn inspector(app: &mut App, ui: &mut egui::Ui) {
         track(app, &r);
         ui.end_row();
         if let LayerContent::Media { trim_in, .. } = layer.content {
-            ui.label("Source in");
+            ui.label("Skip first").on_hover_text("Start the video this many seconds in (trim)");
             let mut trim = trim_in;
             let r = ui.add(egui::DragValue::new(&mut trim).speed(0.04).range(0.0..=f64::MAX).suffix(" s"));
             if r.changed() {
@@ -198,8 +245,8 @@ pub fn inspector(app: &mut App, ui: &mut egui::Ui) {
         .map(|l| (l.id, l.name.clone()))
         .collect();
     if !tracked.is_empty() {
-        ui.horizontal(|ui| {
-            ui.label("Follow tracked region of");
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Follow the tracked region of");
             for (tid, name) in tracked {
                 if ui.button(&name).on_hover_text("Keyframe this layer to move with that layer's tracked mask").clicked() {
                     app.status = match app.follow_track(id, tid) {
@@ -210,31 +257,30 @@ pub fn inspector(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     }
-    if ui.button("Reset transform").clicked() {
-        app.edit("Reset transform", |d| {
-            let canvas = d.canvas.clone();
-            if let Some(l) = d.layer_mut(id) {
-                l.transform = ph_core::LayerTransform::centered(&canvas);
-            }
-        });
-    }
-    if ui.button("Fit layer to canvas").clicked() {
-        let size = app.doc.layer_source_size(&layer);
-        let c = &app.doc.canvas;
-        let k = (c.width as f32 / size.x).min(c.height as f32 / size.y);
-        app.edit("Fit to canvas", |d| {
-            let canvas = d.canvas.clone();
-            if let Some(l) = d.layer_mut(id) {
-                l.transform = ph_core::LayerTransform::centered(&canvas);
-                l.transform.scale = Animated::new([k, k]);
-            }
-        });
-    }
+    });
 }
 
 fn canvas_settings(app: &mut App, ui: &mut egui::Ui) {
+    if app.doc.layers.is_empty() {
+        ui.heading("Getting started");
+        for (n, text) in [
+            (1, "Import the background (a game screenshot, photo or video): drag it onto the window, or File > Import (Ctrl+I)."),
+            (2, "Import the photo or video of yourself the same way. It lands on top."),
+            (3, "Select your layer and follow its numbered steps: Cut out, Position & size, Fit into the scene."),
+            (4, "File > Export saves the finished image or video."),
+        ] {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(format!("{n}.")).strong());
+                ui.label(text);
+            });
+        }
+        if ui.button("Open the manual (F1)").clicked() {
+            app.help.open_page("start");
+        }
+        ui.separator();
+    }
     ui.heading("Canvas");
-    ui.label("Select a layer to edit it.");
+    hint(ui, "The size and length of the final picture or video. Select a layer in the Layers list to edit that layer instead.");
     let c = app.doc.canvas.clone();
     egui::Grid::new("canvas_grid").num_columns(2).show(ui, |ui| {
         ui.label("Size");
